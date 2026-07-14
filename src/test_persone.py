@@ -45,6 +45,23 @@ def esegui_test():
     assert n == 2, n
     nomi = {p["name"] for p in database.ottieni_persone()}
     assert "Alice" in nomi
+
+    # una persona "Alice" con volti divisi su due basi lontane (dopo il
+    # re-cluster finiscono su due cluster diversi): il nome deve andare
+    # a un solo cluster, non a entrambi
+    carlo = _vettore(10)
+    v4 = database.aggiungi_volto(id_media, id_frame, "/tmp/c1.jpg", carlo, [0,0,1,1])
+    id_persona_carlo = database.crea_persona()
+    database.assegna_volto_a_persona(v4, id_persona_carlo)
+    dora = _vettore(20)
+    v5 = database.aggiungi_volto(id_media, id_frame, "/tmp/d1.jpg", dora, [0,0,1,1])
+    database.assegna_volto_a_persona(v5, id_persona_carlo)  # stessa vecchia persona, basi lontane
+    database.rinomina_persona(id_persona_carlo, "Alice")
+
+    n = persone.ricalcola_tutti_cluster()
+    persone_alice = [p for p in database.ottieni_persone() if p["name"] == "Alice"]
+    assert len(persone_alice) <= 1, persone_alice
+    assert n == 4, n  # p1/p2, p3, carlo, dora: 4 cluster distinti
     print("test_persone: OK")
 
 if __name__ == "__main__":

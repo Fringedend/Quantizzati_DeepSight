@@ -38,8 +38,9 @@ def assegna_persona(embedding, id_volto):
 
 def ricalcola_tutti_cluster():
     """Re-clustering completo con DBSCAN (metrica coseno). Preserva i nomi
-    esistenti assegnandoli al cluster che contiene la maggioranza dei volti
-    della vecchia persona. Ritorna il numero di persone risultanti."""
+    esistenti assegnando ogni nome al SINGOLO cluster dove ha piu' voti (cosi'
+    un nome non finisce mai su due cluster diversi se i volti della vecchia
+    persona si sono spezzati). Ritorna il numero di persone risultanti."""
     from sklearn.cluster import DBSCAN
 
     volti = database.carica_tutti_embedding_volti()
@@ -61,18 +62,31 @@ def ricalcola_tutti_cluster():
 
     database.azzera_persone()
     persona_per_etichetta = {}
-    voti_nome = {}  # etichetta -> {nome: conteggio}
+    voti = {}  # (nome, etichetta) -> conteggio
     for volto, etichetta in zip(volti, etichette):
         if etichetta not in persona_per_etichetta:
             persona_per_etichetta[etichetta] = database.crea_persona()
         database.assegna_volto_a_persona(volto["face_id"], persona_per_etichetta[etichetta])
         vecchio_nome = vecchi_nomi.get(volto_a_vecchia_persona.get(volto["face_id"]))
         if vecchio_nome:
-            conteggi = voti_nome.setdefault(etichetta, {})
-            conteggi[vecchio_nome] = conteggi.get(vecchio_nome, 0) + 1
+            chiave = (vecchio_nome, etichetta)
+            voti[chiave] = voti.get(chiave, 0) + 1
 
-    for etichetta, conteggi in voti_nome.items():
-        nome_maggioranza = max(conteggi, key=conteggi.get)
-        database.rinomina_persona(persona_per_etichetta[etichetta], nome_maggioranza)
+    # per ogni nome, il cluster dove ha piu' voti (un solo cluster per nome)
+    cluster_per_nome = {}
+    for (nome, etichetta), conteggio in voti.items():
+        migliore = cluster_per_nome.get(nome)
+        if migliore is None or conteggio > migliore[1]:
+            cluster_per_nome[nome] = (etichetta, conteggio)
+
+    # assegno i nomi ai cluster in ordine di voti decrescenti: se due nomi
+    # vogliono lo stesso cluster vince quello con piu' voti, l'altro si perde
+    # (un cluster -> al massimo un nome)
+    etichette_assegnate = set()
+    for nome, (etichetta, conteggio) in sorted(cluster_per_nome.items(), key=lambda x: -x[1][1]):
+        if etichetta in etichette_assegnate:
+            continue  # cluster gia' assegnato a un nome con piu' voti: questo nome si perde
+        database.rinomina_persona(persona_per_etichetta[etichetta], nome)
+        etichette_assegnate.add(etichetta)
 
     return len(persona_per_etichetta)
