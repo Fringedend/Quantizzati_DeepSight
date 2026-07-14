@@ -19,6 +19,8 @@ def ottieni_connessione():
     """Restituisce una connessione al database SQLite locale."""
     connessione = sqlite3.connect(config.PERCORSO_DB)
     connessione.execute("PRAGMA foreign_keys = ON;")
+    # worker scrive spesso + UI legge/scrive: WAL evita "database is locked"
+    connessione.execute("PRAGMA journal_mode=WAL;")
     return connessione
 
 def inizializza_db():
@@ -426,32 +428,6 @@ def aggiorna_stato_elaborazione(id_media, data_creazione=None, latitudine=None, 
     connessione.commit()
     connessione.close()
     return None
-
-def aggiungi_frame_multimediale(id_media, indice_frame, secondi_timestamp, percorso_immagine, testo_ocr, oggetti, embedding_clip):
-    """Inserisce un record per il frame (o immagine singola) con il suo embedding e lo sincronizza in ChromaDB."""
-    connessione = ottieni_connessione()
-    cursore = connessione.cursor()
-
-    # Converte la lista/set di oggetti in una stringa JSON
-    oggetti_str = json.dumps(list(oggetti)) if isinstance(oggetti, (list, set)) else oggetti
-    blob_embedding = serializza_vettore(embedding_clip)
-
-    cursore.execute("""
-    INSERT INTO media_frames (media_id, frame_index, timestamp_seconds, image_path, ocr_text, objects, clip_embedding)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (id_media, indice_frame, secondi_timestamp, percorso_immagine, testo_ocr, oggetti_str, blob_embedding))
-    id_frame = cursore.lastrowid
-
-    # Indicizza il vettore CLIP nella collezione dei frame (fonte di verita': SQLite)
-    if _store_frame is not None:
-        try:
-            _store_frame.aggiungi_o_aggiorna([id_frame], [embedding_clip], [{"media_id": id_media}])
-        except Exception as errore:
-            print(f"Errore durante l'inserimento vettoriale per il frame {id_frame}: {errore}")
-
-    connessione.commit()
-    connessione.close()
-    return id_frame
 
 def aggiungi_volto(id_media, id_frame, percorso_ritaglio, embedding, riquadro):
     """Salva i dati di un volto rilevato e il relativo embedding FaceNet, sincronizzandolo con ChromaDB."""

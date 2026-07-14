@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Tuple
 
 # Un solo PersistentClient per cartella, riusato se la stessa cartella viene richiesta più volte.
 # In ChromaDB 1.5.x due collezioni HNSW che vivono nello STESSO path/processo si
-# interferiscono: dopo aver interrogato "faces", la query su "clip_frames" fallisce con
+# interferiscono: dopo aver interrogato "faces", la query su "qwen_frames" fallisce con
 # "Error creating hnsw segment reader: Nothing found on disk" (accade anche con count()/get()).
 # Per questo ogni collezione usa una SOTTOCARTELLA separata (vedi ChromaStore.__init__),
 # così ognuna ha il proprio client isolato e il baco non si manifesta.
@@ -31,7 +31,7 @@ class ChromaStore:
 
     def __init__(self, nome_collezione: str = "media_vectors"):
         # Ogni collezione vive in una SOTTOCARTELLA dedicata di chroma_db (es.
-        # chroma_db/clip_frames, chroma_db/faces) così ognuna ha un client/indice
+        # chroma_db/qwen_frames, chroma_db/faces) così ognuna ha un client/indice
         # isolato: aggira il baco di interferenza HNSW tra collezioni di ChromaDB 1.5.x
         # (vedi nota su _cache_client). Questo file vive in .\src\, quindi si risale di
         # un livello per tenere chroma_db nella cartella radice del progetto.

@@ -870,7 +870,7 @@ if menu == "📊 Dashboard":
     with col_dettaglio1:
         st.write(f"- **Immagini elaborate:** {statistiche['images_count']}")
         st.write(f"- **Video elaborati:** {statistiche['videos_count']}")
-        st.write(f"- **File in coda (non elaborati):** {statistiche['unprocessed_count']}")
+        st.write(f"- **File da preparare:** {statistiche['unprocessed_count']}")
         st.write(f"- **File falliti:** {statistiche['failed_count']}")
     
     with col_dettaglio2:
