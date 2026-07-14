@@ -339,13 +339,14 @@ def _prepara_media(elemento):
         if data_creazione is None:
             data_creazione = datetime.datetime.fromtimestamp(os.stat(percorso).st_mtime).isoformat()
         nome_localita = ottieni_nome_luogo(lat, lon)
+        database.crea_frame(id_media, 0, 0.0, percorso)
+        # le immagini non hanno audio: lo stadio trascrizione e' gia' "fatto"
+        database.imposta_stato_stadio(id_media, "stato_trascrizione", 1)
+        # processed=1 per ultimo: un crash non deve lasciare un'immagine senza frame
         database.aggiorna_stato_elaborazione(
             id_media=id_media, data_creazione=data_creazione, latitudine=lat,
             longitudine=lon, nome_localita=nome_localita,
             larghezza=larghezza, altezza=altezza, stato_elaborazione=1)
-        database.crea_frame(id_media, 0, 0.0, percorso)
-        # le immagini non hanno audio: lo stadio trascrizione e' gia' "fatto"
-        database.imposta_stato_stadio(id_media, "stato_trascrizione", 1)
     else:  # video
         proprieta = ottieni_proprieta_video(percorso)
         if not proprieta:
@@ -475,6 +476,7 @@ def stato_coda():
     conteggi = database.conteggio_coda()
     rimanenti = conteggi["da_preparare"] + conteggi["embedding"] + conteggi["volti"] + conteggi["trascrizione"]
     durate = _stato_runtime["durate"]
+    # ETA approssimativa per-iterazione: sovrastima con più stadi pendenti (un elemento potrebbe passare più stadi)
     eta = (sum(durate) / len(durate)) * rimanenti if durate and rimanenti else None
     return {**conteggi, "rimanenti": rimanenti, "in_corso": _stato_runtime["in_corso"],
             "in_pausa": database.leggi_impostazione("coda_in_pausa", "0") == "1",
