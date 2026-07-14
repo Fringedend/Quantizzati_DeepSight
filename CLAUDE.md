@@ -3,9 +3,11 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 DeepSight: a local Streamlit app to archive and search photos/videos with AI —
-CLIP (semantic search + zero-shot tags), MTCNN/FaceNet (faces), EasyOCR (text in
-images), Whisper (audio transcription). **All code identifiers, comments, and docs
-are in Italian** — match that when editing.
+Qwen3-VL-Embedding-2B (semantic text/image search, image similarity, zero-shot tags;
+served locally by a `llama-server` subprocess), MTCNN/FaceNet (face detection +
+person clustering), Whisper (audio transcription). No CLIP, no EasyOCR — Qwen3-VL
+replaced both. **All code identifiers, comments, and docs are in Italian** — match
+that when editing.
 
 ## Commands
 
@@ -22,8 +24,21 @@ Launcher scripts live under `scripts/`, split per OS: `scripts/windows/` and
 # Unit check (assumption behind Chroma retrieval: L2 rank == cosine rank for normalized vectors)
 .\venv\Scripts\python.exe src\test_ricerca_vettoriale.py
 
-# Diagnostic: verify all four AI models load
+# Qwen client helpers (smart_resize, base64 encoding) — no llama-server needed
+.\venv\Scripts\python.exe src\test_qwen_client.py
+
+# Staged-queue + persons schema (temp DB, Chroma handles stubbed out — no real writes)
+.\venv\Scripts\python.exe src\test_database_v07.py
+
+# Face clustering: greedy centroid assignment + DBSCAN re-cluster
+.\venv\Scripts\python.exe src\test_persone.py
+
+# Diagnostic: verify all three AI models load (Qwen via llama-server, FaceNet, Whisper)
 .\venv\Scripts\python.exe src\test_models.py
+
+# Manual (not a test): measure real Qwen cosine distributions on your own archive to
+# (re)tune config.py's SOGLIA_SIMILARITA_IMMAGINE / FATTORE_SIGMA_RICERCA_TESTO / SCALA_LOGIT_TAG
+.\venv\Scripts\python.exe src\calibra_soglie.py "una query di prova"
 ```
 
 The `.bat` files exist only because double-clicking a `.ps1` opens it in an editor;
@@ -37,6 +52,9 @@ Python (distros differ too much — apt/dnf/pacman) and detects the GPU via
 ./scripts/linux/install.sh
 ./scripts/linux/run.sh
 venv/bin/python src/test_ricerca_vettoriale.py
+venv/bin/python src/test_qwen_client.py
+venv/bin/python src/test_database_v07.py
+venv/bin/python src/test_persone.py
 venv/bin/python src/test_models.py
 ```
 
@@ -46,7 +64,8 @@ self-check — run the file directly.
 ## Non-obvious architecture
 
 **Search = SQLite is the source of truth, Chroma is only an ANN index.** Embeddings
-are stored twice: as float32 BLOBs in SQLite (`media_frames.clip_embedding`,
+are stored twice: as float32 BLOBs in SQLite (`media_frames.clip_embedding` — the
+column name is a holdover from the CLIP era, it now holds 2048-d Qwen vectors;
 `faces.embedding`) and as vectors in ChromaDB. The search flow (`database.cerca_frame_simili`
 / `cerca_volti_simili`): Chroma returns the top-k *candidate ids*, then the **exact
 cosine is recomputed in Python** (`np.dot`) against the SQLite BLOBs. Chroma's own
@@ -54,19 +73,24 @@ distance score is deliberately ignored — it defaults to L2, and the app's thre
 (`config.SOGLIA_SIMILARITA_*`) are cosine. If `_store_frame`/`_store_volti` is `None`
 (Chroma failed to load), both functions fall back to a full linear scan.
 
-**The three search modes live on different cosine scales — no shared threshold.** Text→image
-(multilingual encoder) cosines sit in a narrow band (~0.13–0.27) whose noise floor shifts per
-query, so there is *no* usable constant: `database.soglia_adattiva_testo` recomputes the cutoff
-per query as `media + FATTORE_SIGMA_RICERCA_TESTO * sigma` over **all** frame embeddings (not the
-Chroma candidates — those are the top ones, so their mean is inflated). Image→image cosines are
-far higher (median ~0.48), and use their own constant `SOGLIA_SIMILARITA_IMMAGINE`; faces use
-`SOGLIA_SIMILARITA_VOLTI`. Reusing one threshold across modes is what made image search return
-the entire archive.
+**Text→image and image→image search share one embedding model but not one threshold —
+plus an optional negative-prompt penalty.** Both use Qwen3-VL-Embedding-2B
+(`models.GestoreQwen`), but the two cosine distributions sit on different, query-dependent
+scales, so there is no single usable constant for text search: `database.soglia_adattiva_testo`
+recomputes the cutoff per query as `media + FATTORE_SIGMA_RICERCA_TESTO * sigma` over **all**
+frame embeddings (not the Chroma candidates — those are the top ones, so their mean is
+inflated). Image→image search uses the fixed `config.SOGLIA_SIMILARITA_IMMAGINE`; faces use
+`SOGLIA_SIMILARITA_VOLTI`. **These constants (and `SCALA_LOGIT_TAG` for zero-shot tags) were
+carried over from CLIP and are placeholder values for Qwen** — see the "ATTENZIONE (v0.7)"
+comment in `config.py`; recalibrate on real archive data with `src/calibra_soglie.py`. The
+text-search tab also supports an optional negative prompt (`app.py`, "Ricerca Avanzata" →
+Semantica): the UI embeds a second "must not contain" phrase and the final score becomes
+`cos(query, frame) - config.LAMBDA_PROMPT_NEGATIVO * cos(negative, frame)`.
 
-**Two separate Chroma collections (`clip_frames`, `faces`) are mandatory, not cosmetic.**
+**Two separate Chroma collections (`qwen_frames`, `faces`) are mandatory, not cosmetic.**
 `media_frames.id` and `faces.id` are independent AUTOINCREMENT sequences, so frame 1
 and face 1 share id `"1"`. A single collection would collide and silently corrupt
-retrieval (both vectors are 512-d, so no dimension error surfaces it).
+retrieval (both vectors are 2048-d, so no dimension error surfaces it).
 
 **Chroma self-heals from SQLite.** `database._sincronizza_indici_vettoriali()` runs
 at the end of `inizializza_db()`: if a collection is empty but SQLite has rows, it
@@ -82,17 +106,32 @@ path. Any standalone script must run with `src/` as cwd or the imports break.
 always land at the project root regardless of where the process starts. `config.py`
 creates all `data/` subfolders at import time.
 
-**Models are lazy singletons.** `models.gestore` (a `GestoreModelli`) picks the device
-once (`config.MODALITA_DISPOSITIVO`: auto/cpu/cuda, falling back to CPU if CUDA is
-absent) and loads each of CLIP/FaceNet/EasyOCR/Whisper only on first use. The
-sidebar's "Libera Memoria GPU" button calls `gestore.libera_memoria()`.
+**Models are lazy singletons, but Qwen is a subprocess, not an in-process model.**
+`models.gestore` (a `GestoreModelli`) picks the device once (`config.MODALITA_DISPOSITIVO`:
+auto/cpu/cuda, falling back to CPU if CUDA is absent) and loads FaceNet/Whisper only on
+first use, same as before. `gestore.ottieni_qwen()` instead lazily spawns `llama-server`
+(`models.GestoreQwen`, driven over HTTP by `src/qwen_client.py`) as a CPU subprocess serving
+`models/qwen/*.gguf` on `127.0.0.1:8091`; it's stopped by `libera_memoria()` or at process
+exit (`atexit`). The sidebar's "Libera Memoria GPU" button calls `gestore.libera_memoria()`,
+which also kills the llama-server subprocess.
 
-**Ingestion pipeline** (`processor.aggiungi_e_elabora_file`): dedup by SHA-256 →
-copy into `data/archive/` renamed to `<hash><ext>` → insert row (`processed=0`) →
-per media type run `elabora_immagine`/`elabora_video` (EXIF/GPS, CLIP embedding,
-zero-shot tags via softmax over `CATEGORIE`, OCR, face crops; videos also sample
-frames every `INTERVALLO_FRAME_VIDEO`s and Whisper-transcribe) → `processed=1`
-(or `-1` on failure). All tunable thresholds live in `config.py`.
+**Ingestion is a two-speed, resumable staged queue — not one synchronous pipeline.**
+`processor.registra_file` does only the fast, AI-free part synchronously: dedup by
+SHA-256, copy into `data/archive/` renamed to `<hash><ext>`, insert the `media_items` row
+(`processed=0`). `processor.avvia_lavoratore()` starts (once per process) a daemon thread
+that works off a queue that is *not* in memory — `database.prossimo_media_in_coda()` IS the
+queue, so a restart resumes exactly where it left off. The thread first runs `_prepara_media`
+(thumbnail, EXIF/GPS, video frame extraction — no AI, so the gallery fills quickly) which
+flips `processed` to `1`, then the three independent AI stages, each tracked by its own
+column on `media_items` (`stato_embedding`, `stato_volti`, `stato_trascrizione`; each
+0=pending/1=done/-1=failed): `_stadio_embedding` (Qwen embedding + zero-shot tags via softmax
+over `CATEGORIE`), `_stadio_volti` (MTCNN/FaceNet + assignment to a person via
+`persone.assegna_persona`), `_stadio_trascrizione` (video only: ffmpeg audio extraction +
+Whisper). `processor.stato_coda()` reports counts/ETA for the UI's queue panel. Pause/resume
+(`metti_in_pausa()`/`riprendi()`) is a flag in the `impostazioni` key/value table
+(`coda_in_pausa`), polled between stages so the in-flight item finishes cleanly;
+`riprova_falliti()` resets any `-1` stage/item back to `0`. All tunable thresholds live in
+`config.py`.
 
 **Archive is app-managed; "intruder" files.** Because legit files are named by hash,
 any file in `data/archive/` not in the DB was hand-copied and is unindexed. The
@@ -104,8 +143,15 @@ Dashboard's integrity panel and `processor.trova_file_intrusi` /
 Both installers (`scripts/windows/install.ps1`, `scripts/linux/install.sh`) install
 `torch`/`torchvision` first from the CUDA-or-CPU wheel index (auto-detected via
 `nvidia-smi`, plus a WMI fallback on Windows), then `requirements.txt`, then
-`facenet-pytorch` and `easyocr` with `--no-deps` to prevent them from pulling
-NumPy < 2.0. **To add a normal dependency, edit `requirements.txt` only** — neither
-script needs changes; keep the two in sync when the install flow itself changes. FFmpeg
-comes from `imageio-ffmpeg`; `models.py`/`processor.py` prepend its bin dir to `PATH`
-and feed Whisper a manually decoded WAV array to avoid a Windows `ffmpeg.exe` lookup.
+`facenet-pytorch` with `--no-deps` to prevent it from pulling NumPy < 2.0. **To add a
+normal dependency, edit `requirements.txt` only** — neither script needs changes; keep
+the two in sync when the install flow itself changes. FFmpeg comes from `imageio-ffmpeg`;
+`models.py`/`processor.py` prepend its bin dir to `PATH` and feed Whisper a manually
+decoded WAV array to avoid a Windows `ffmpeg.exe` lookup.
+
+**Qwen's model files are not installed by either script — copy them in by hand.**
+`models/qwen/` must contain `llama-server`(`.exe` on Windows, plus its DLLs),
+`Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf`, and `mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf`
+(paths in `config.PERCORSO_LLAMA_SERVER`/`PERCORSO_MODELLO_QWEN`/`PERCORSO_MMPROJ_QWEN`).
+Since Qwen loads lazily, a missing file doesn't surface at app startup — it raises
+`FileNotFoundError` the first time anything needs an embedding (upload, search, tags).
