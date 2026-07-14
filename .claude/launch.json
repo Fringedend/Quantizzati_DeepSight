@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "deepsight",
+      "runtimeExecutable": "venv\\Scripts\\python.exe",
+      "runtimeArgs": [
+        "-m",
+        "streamlit",
+        "run",
+        "src\\app.py",
+        "--server.headless",
+        "true"
+      ],
+      "autoPort": true,
+      "port": 8501
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+venv/
+chroma_db/
+data/
+models/
+__pycache__/
+*.pyc
+.superpowers/

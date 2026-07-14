@@ -1,0 +1,31 @@
+# Core Dependencies
+numpy>=2.0.0
+pillow>=12.0.0
+opencv-python-headless>=4.9.0
+streamlit>=1.50.0
+chromadb>=1.0.0
+# Reverse geocoding OFFLINE (coordinate GPS -> nome del luogo) per il filtro "Luogo".
+# Usa un dataset di città incluso: nessun accesso a internet.
+reverse_geocoder>=1.5.1
+
+# Deep Learning & AI Models
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.40.0
+# Encoder di testo multilingue per la ricerca semantica (vedi NOME_MODELLO_CLIP_TESTO_MULTILINGUE).
+# >=3.0.0 supporta NumPy 2 e non lo declassa.
+sentence-transformers>=3.0.0
+openai-whisper>=20231117
+imageio-ffmpeg>=0.4.9
+
+# EasyOCR Dependencies
+scikit-image>=0.20.0
+ninja>=1.11.0
+pyclipper>=1.3.0
+python-bidi>=0.4.2
+Shapely>=2.0.0
+
+# NOTA: I seguenti pacchetti devono essere installati con il flag --no-deps
+# per evitare che pip tenti di compilare versioni obsolete di NumPy (< 2.0.0):
+# - facenet-pytorch
+# - easyocr
