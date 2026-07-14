@@ -78,6 +78,48 @@ class GestoreCLIP:
         with torch.no_grad():
             return self.modello.logit_scale.exp().item()
 
+class GestoreQwen:
+    """Embedding multimodali Qwen3-VL-2B tramite sottoprocesso llama-server (CPU).
+
+    Il server viene avviato pigramente al primo embedding e fermato da
+    libera_memoria() o alla chiusura del processo (atexit).
+    """
+
+    def __init__(self):
+        import qwen_client
+        self._qc = qwen_client
+        self.server = qwen_client.LlamaServer(
+            exe=config.PERCORSO_LLAMA_SERVER,
+            model_path=config.PERCORSO_MODELLO_QWEN,
+            mmproj_path=config.PERCORSO_MMPROJ_QWEN,
+            host=config.QWEN_HOST,
+            port=config.QWEN_PORT,
+            threads=config.QWEN_THREADS,
+        )
+        for percorso in (config.PERCORSO_LLAMA_SERVER, config.PERCORSO_MODELLO_QWEN,
+                         config.PERCORSO_MMPROJ_QWEN):
+            if not os.path.exists(percorso):
+                raise FileNotFoundError(
+                    f"File del modello Qwen mancante: {percorso}. "
+                    "Copia i file in models/qwen/ (vedi README).")
+        print("Avvio llama-server (Qwen3-VL-Embedding-2B)...")
+        self.server.avvia()
+        import atexit
+        atexit.register(self.server.ferma)
+        print("llama-server pronto.")
+
+    def ottieni_embedding_testo(self, testo, con_istruzione=True):
+        """Embedding 2048-d normalizzato di un testo. Le QUERY di ricerca usano
+        l'istruzione di retrieval; i testi 'documento' (es. nomi di categorie) no."""
+        istruzione = config.ISTRUZIONE_RICERCA if con_istruzione else None
+        return self.server.embed_text(testo, instruction=istruzione)
+
+    def ottieni_embedding_immagine(self, sorgente):
+        """Embedding 2048-d normalizzato di un'immagine (percorso file o PIL)."""
+        from PIL import Image
+        img = Image.open(sorgente) if isinstance(sorgente, str) else sorgente
+        return self.server.embed_image_b64(self._qc.pil_to_base64_qwen(img))
+
 class RiconoscitoreVolti:
     """Classe per rilevare volti e generare i relativi embedding con MTCNN e FaceNet."""
     
@@ -254,6 +296,7 @@ class GestoreModelli:
         self._volti = None
         self._ocr = None
         self._whisper = None
+        self._qwen = None
         # Il caricamento pigro può avvenire sia dalla UI sia dal thread di
         # elaborazione in background: il lock evita doppi caricamenti concorrenti.
         self._lock = threading.Lock()
@@ -281,13 +324,22 @@ class GestoreModelli:
             if self._whisper is None:
                 self._whisper = GestoreWhisper(self.dispositivo)
         return self._whisper
-        
+
+    def ottieni_qwen(self) -> GestoreQwen:
+        with self._lock:
+            if self._qwen is None:
+                self._qwen = GestoreQwen()
+        return self._qwen
+
     def libera_memoria(self):
         """Rilascia i modelli per liberare la memoria GPU e RAM quando richiesto."""
         self._clip = None
         self._volti = None
         self._ocr = None
         self._whisper = None
+        if self._qwen is not None:
+            self._qwen.server.ferma()
+        self._qwen = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         import gc
