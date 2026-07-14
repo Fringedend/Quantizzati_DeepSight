@@ -4,6 +4,7 @@ import sys
 import subprocess
 import datetime
 import tempfile
+import numpy as np
 from PIL import Image, ImageOps
 
 import config
@@ -33,9 +34,8 @@ if "geocodifica_fatta" not in st.session_state:
     processor.geocodifica_luoghi_mancanti()
     st.session_state["geocodifica_fatta"] = True
 
-# Riprende in background le elaborazioni rimaste a metà (es. app chiusa durante
-# un caricamento). Il guard è nel processor: viene eseguita una volta per processo.
-processor.riprendi_elaborazioni_interrotte()
+# Avvia il lavoratore della coda: riprende da solo gli elementi pendenti nel DB.
+processor.avvia_lavoratore()
 
 # --- MARCHIO (in cima alla barra laterale) ---
 # Logo blu grande e ben visibile. Il tema chiaro/scuro si cambia con lo switch NATIVO
@@ -704,28 +704,38 @@ def deduplica_risultati(risultati_ricerca):
 
 # (I filtri di ricerca sono stati spostati nella pagina "Ricerca Avanzata".)
 
-# Indicatore dell'elaborazione in background: si auto-aggiorna ogni 2 secondi
-# (st.fragment) ed è nella barra laterale, quindi visibile da qualunque pagina.
+# Pannello coda: si auto-aggiorna ogni 2 secondi ed e' visibile da ogni pagina.
 @st.fragment(run_every=2.0)
-def indicatore_elaborazione_background():
-    stato = processor.stato_elaborazione_background()
-    if stato["totale"] == 0:
-        return
-    fatti = stato["completati"] + stato["falliti"]
-    if fatti < stato["totale"] or stato["in_corso"]:
-        riga = f"⚙️ **Elaborazione in corso:** {fatti}/{stato['totale']}"
-        if stato["in_corso"]:
-            riga += f"\n\n`{stato['in_corso']}`"
-        st.info(riga)
-        st.progress(min(1.0, fatti / stato["totale"]))
-    else:
-        testo = f"✅ Elaborazione completata: {stato['completati']} file"
+def pannello_coda():
+    stato = processor.stato_coda()
+    if stato["rimanenti"] == 0 and not stato["in_corso"]:
         if stato["falliti"]:
-            testo += f" · ⚠️ {stato['falliti']} falliti"
-        st.success(testo)
+            st.warning(f"⚠️ {stato['falliti']} elementi con elaborazioni fallite")
+        return
+    riga = f"⚙️ **Coda elaborazione:** {stato['rimanenti']} elementi"
+    if stato["in_corso"]:
+        riga += f"\n\n`{stato['in_corso']}`"
+    if stato["eta_secondi"]:
+        riga += f"\n\n⏳ stimati {datetime.timedelta(seconds=int(stato['eta_secondi']))}"
+    st.info(riga)
+    st.caption(f"da preparare: {stato['da_preparare']} · embedding: {stato['embedding']} · "
+               f"volti: {stato['volti']} · trascrizioni: {stato['trascrizione']}")
+    if stato["in_pausa"]:
+        st.warning("⏸️ Coda in pausa (l'elemento corrente viene completato)")
+        if st.button("▶️ Riprendi", key="coda_riprendi", width='stretch'):
+            processor.riprendi()
+            st.rerun(scope="fragment")
+    else:
+        if st.button("⏸️ Metti in pausa", key="coda_pausa", width='stretch'):
+            processor.metti_in_pausa()
+            st.rerun(scope="fragment")
+    if stato["falliti"]:
+        if st.button(f"🔁 Riprova falliti ({stato['falliti']})", key="coda_riprova", width='stretch'):
+            processor.riprova_falliti()
+            st.rerun(scope="fragment")
 
 with st.sidebar:
-    indicatore_elaborazione_background()
+    pannello_coda()
 
 # Informazioni locali e pulizia memoria
 st.sidebar.markdown("### Configurazione Locale")
@@ -1042,14 +1052,13 @@ elif menu == "📤 Caricamento & Import":
                             if os.path.exists(percorso_temporaneo):
                                 os.remove(percorso_temporaneo)
 
-                # FASE 2 (in background): il lotto viene accodato al thread di
-                # elaborazione e la pagina torna subito libera. L'avanzamento è
-                # nella barra laterale e prosegue anche cambiando pagina.
+                # FASE 2 (in background): il lavoratore della coda riprende da solo gli
+                # elementi appena registrati (processed=0) e la pagina torna subito libera.
                 if lotto:
-                    processor.avvia_elaborazione_in_background(lotto)
+                    processor.avvia_lavoratore()
                     st.success(
                         f"{len(lotto)} file registrati: elaborazione avviata in background. "
-                        "Puoi continuare a navigare, l'avanzamento è nella barra laterale."
+                        "Puoi continuare a navigare, l'avanzamento e i controlli pausa/riprendi sono nella barra laterale."
                     )
                 else:
                     st.error("Nessun file registrato: controlla gli errori sopra.")
@@ -1104,8 +1113,8 @@ elif menu == "🔍 Ricerca Avanzata":
     sotto_scheda1, sotto_scheda2, sotto_scheda3, sotto_scheda4 = st.tabs([
         "🔍 Semantica (Testo)", 
         "🖼️ Similarità Immagine", 
-        "👤 Riconoscimento Volto", 
-        "📝 OCR e Parlato"
+        "👤 Riconoscimento Volto",
+        "🗣️ Parlato (Whisper)"
     ])
     
     risultati = [] # Conterrà tuple: (elemento, punteggio, tipo_ricerca)
@@ -1113,31 +1122,38 @@ elif menu == "🔍 Ricerca Avanzata":
     with sotto_scheda1:
         st.markdown("#### Ricerca per concetto testuale")
         testo_query = st.text_input("Inserisci cosa stai cercando (es: 'una spiaggia al tramonto', 'strada con auto', 'cane che corre')", "")
-        
+        usa_negativo = st.toggle("Prompt negativo (escludi elementi)", key="tgl_negativo")
+        testo_negativo = ""
+        if usa_negativo:
+            testo_negativo = st.text_input("Cosa NON deve comparire (es: 'persone', 'neve')", "", key="txt_negativo")
+
         if testo_query:
-            with st.spinner("Calcolo embedding della query e ricerca vettoriale su ChromaDB..."):
+            with st.spinner("Calcolo embedding della query e ricerca vettoriale..."):
                 try:
-                    # Inizializza CLIP e genera l'embedding multilingue della query
-                    clip = gestore.ottieni_clip()
-                    query_emb = clip.ottieni_embedding_query_testo(testo_query)
-
-                    # I coseni testo->immagine stanno in una fascia stretta e il rumore di fondo
-                    # varia con la query: la soglia si ricalcola sulla distribuzione dell'archivio.
+                    qwen = gestore.ottieni_qwen()
+                    query_emb = qwen.ottieni_embedding_testo(testo_query)
                     soglia = database.soglia_adattiva_testo(query_emb)
+                    emb_negativo = None
+                    if usa_negativo and testo_negativo.strip():
+                        emb_negativo = qwen.ottieni_embedding_testo(testo_negativo.strip())
 
-                    # Chroma restituisce i frame candidati, con il coseno esatto già calcolato
                     for f, sim in database.cerca_frame_simili(query_emb):
                         if not applica_filtri(f, filtri):
                             continue
-                        if sim >= soglia:
-                            risultati.append((f, sim, "clip"))
+                        if sim < soglia:
+                            continue
+                        punteggio = sim
+                        if emb_negativo is not None:
+                            # penalita': gli elementi affini al prompt negativo scendono
+                            punteggio = sim - config.LAMBDA_PROMPT_NEGATIVO * float(
+                                np.dot(emb_negativo, f["embedding"]))
+                        risultati.append((f, punteggio, "clip"))
 
-                    # Rimuove i duplicati, ordina per punteggio e limita i risultati
                     risultati = deduplica_risultati(risultati)
                     risultati = risultati[:30]
                 except Exception as errore:
                     st.error(f"Errore nella ricerca semantica: {errore}")
-                    
+
     with sotto_scheda2:
         st.markdown("#### Trova elementi visivamente simili a un'immagine query")
         file_immagine_query = st.file_uploader("Carica un'immagine di esempio", type=["jpg", "jpeg", "png"], key="img_sim")
@@ -1156,8 +1172,8 @@ elif menu == "🔍 Ricerca Avanzata":
             # altrimenti l'eliminazione non verrebbe mai eseguita.
             if st.button("Esegui Ricerca per Similarità"):
                 with st.spinner("Elaborazione immagine di query..."):
-                    clip = gestore.ottieni_clip()
-                    st.session_state["emb_query_img"] = clip.ottieni_embedding_immagine(immagine_pil_query)
+                    qwen = gestore.ottieni_qwen()
+                    st.session_state["emb_query_img"] = qwen.ottieni_embedding_immagine(immagine_pil_query)
                     st.session_state["id_file_img"] = id_file_img
 
             if st.session_state.get("emb_query_img") is not None and st.session_state.get("id_file_img") == id_file_img:
@@ -1230,34 +1246,24 @@ elif menu == "🔍 Ricerca Avanzata":
                         risultati = risultati[:30]
                         
     with sotto_scheda4:
-        st.markdown("#### Cerca testo riconosciuto nei cartelli (OCR) o audio parlato nei video (Whisper)")
-        parola_chiave = st.text_input("Inserisci parole chiave da cercare (es. 'targa', 'via', parole pronunciate)", "")
-        
+        st.markdown("#### Cerca audio parlato nei video (Whisper)")
+        parola_chiave = st.text_input("Inserisci parole chiave da cercare (es. parole pronunciate)", "")
+
         if parola_chiave:
             with st.spinner("Ricerca testuale nel database..."):
                 try:
                     connessione = database.ottieni_connessione()
                     cursore = connessione.cursor()
-                    
-                    # 1. Ricerca nelle trascrizioni audio di Whisper (Video)
+
+                    # Ricerca nelle trascrizioni audio di Whisper (Video)
                     cursore.execute("""
-                        SELECT id, file_path, filename, media_type, creation_date, location_name, transcription 
-                        FROM media_items 
+                        SELECT id, file_path, filename, media_type, creation_date, location_name, transcription
+                        FROM media_items
                         WHERE media_type = 'video' AND processed = 1 AND transcription LIKE ?
                     """, (f"%{parola_chiave}%",))
                     righe_video = cursore.fetchall()
-                    
-                    # 2. Ricerca nel testo OCR estratto dai frame
-                    cursore.execute("""
-                        SELECT f.id, f.media_id, f.frame_index, f.timestamp_seconds, f.image_path, f.ocr_text,
-                                m.filename, m.file_path, m.media_type, m.creation_date, m.location_name
-                        FROM media_frames f
-                        JOIN media_items m ON f.media_id = m.id
-                        WHERE m.processed = 1 AND f.ocr_text LIKE ?
-                    """, (f"%{parola_chiave}%",))
-                    righe_ocr = cursore.fetchall()
                     connessione.close()
-                    
+
                     # Converte le corrispondenze video
                     for r in righe_video:
                         nome_file = r[2]
@@ -1271,7 +1277,6 @@ elif menu == "🔍 Ricerca Avanzata":
                             "frame_index": 0,
                             "timestamp_seconds": 0.0,
                             "image_path": percorso_anteprima,
-                            "ocr_text": "",
                             "objects": [],
                             "filename": nome_file,
                             "file_path": r[1],
@@ -1283,30 +1288,10 @@ elif menu == "🔍 Ricerca Avanzata":
                         if applica_filtri(elemento, filtri):
                             # Punteggio fisso 1.0 per corrispondenza testuale esatta
                             risultati.append((elemento, 1.0, "text_whisper"))
-                            
-                    # Converte le corrispondenze OCR
-                    for r in righe_ocr:
-                        elemento = {
-                            "frame_id": r[0],
-                            "media_id": r[1],
-                            "frame_index": r[2],
-                            "timestamp_seconds": r[3],
-                            "image_path": r[4],
-                            "ocr_text": r[5] or "",
-                            "objects": [],
-                            "filename": r[6],
-                            "file_path": r[7],
-                            "media_type": r[8],
-                            "creation_date": r[9],
-                            "location_name": r[10] or "",
-                            "matched_type": "Testo Immagine (OCR)"
-                        }
-                        if applica_filtri(elemento, filtri):
-                            risultati.append((elemento, 1.0, "text_ocr"))
-                    
+
                     risultati = deduplica_risultati(risultati)
                     risultati = risultati[:30]
-                            
+
                 except Exception as errore:
                     st.error(f"Errore nella ricerca testuale: {errore}")
 
@@ -1338,10 +1323,10 @@ elif menu == "🔍 Ricerca Avanzata":
                         immagine_da_mostrare = elemento["file_path"] if elemento["media_type"] == 'image' else None
                 
                 # Costruisce la stringa del punteggio o tipo. Discrimina sulla MODALITÀ, non sul
-                # valore: le ricerche testuali (OCR/parlato) assegnano un punteggio fisso di 1.0,
+                # valore: le ricerche testuali (parlato) assegnano un punteggio fisso di 1.0,
                 # ma anche un volto identico a uno in archivio ha coseno 1.0 e finirebbe
                 # etichettato come corrispondenza testuale.
-                stringa_punteggio = "Corrispondenza Testo" if modalita.startswith("text_") else f"{punteggio * 100:.1f}% Rilevanza"
+                stringa_punteggio = "Corrispondenza Testo" if modalita.startswith("text_") else f"{max(0.0, punteggio) * 100:.1f}% Rilevanza"
                 
                 # Stringa dei dettagli (es. timestamp per i video)
                 stringa_dettagli = ""
@@ -1380,10 +1365,6 @@ elif menu == "🔍 Ricerca Avanzata":
                         contenitore_crop = st.container(key=f"crop_volto_{elemento['face_id']}_{idx}")
                         contenitore_crop.image(elemento["crop_path"], caption="Volto corrispondente", width=120)
 
-
-                    if elemento.get("ocr_text"):
-                        st.write(f"**Testo rilevato (OCR):** *{elemento['ocr_text']}*")
-                        
                     if elemento.get("objects"):
                         st.markdown("**Tag rilevati:**")
                         tag_html = "".join([f'<span class="tag-pill">{tag}</span>' for tag in elemento["objects"]])
