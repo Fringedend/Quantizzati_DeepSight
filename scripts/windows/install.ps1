@@ -168,7 +168,7 @@ if (-not $?) {
 #    index CUDA/CPU corretta: pip li vedra' gia' soddisfatti e non li reinstallera'
 #    da PyPI. Aggiungere una dipendenza a requirements.txt e' quindi sufficiente,
 #    senza dover modificare questo script.)
-Write-Host "`n[5/6] Installazione dei pacchetti base da requirements.txt (CLIP, Whisper, Streamlit, OpenCV, ChromaDB)..." -ForegroundColor Cyan
+Write-Host "`n[5/6] Installazione dei pacchetti base da requirements.txt (Whisper, Streamlit, OpenCV, ChromaDB)..." -ForegroundColor Cyan
 .\venv\Scripts\python -m pip install -r requirements.txt
 if (-not $?) {
     Write-Host "ERRORE: Installazione delle dipendenze di base fallita." -ForegroundColor Red
@@ -177,10 +177,10 @@ if (-not $?) {
 }
 
 # 5. Installazione modelli local-only no-deps
-Write-Host "`n[6/6] Installazione di facenet-pytorch e easyocr (--no-deps, per evitare NumPy < 2.0)..." -ForegroundColor Cyan
-.\venv\Scripts\python -m pip install facenet-pytorch easyocr --no-deps
+Write-Host "`n[6/6] Installazione di facenet-pytorch (--no-deps, per evitare NumPy < 2.0)..." -ForegroundColor Cyan
+.\venv\Scripts\python -m pip install facenet-pytorch --no-deps
 if (-not $?) {
-    Write-Host "ERRORE: Installazione dei pacchetti FaceNet e EasyOCR fallita." -ForegroundColor Red
+    Write-Host "ERRORE: Installazione del pacchetto FaceNet fallita." -ForegroundColor Red
     Pause
     Exit 1
 }
@@ -191,4 +191,19 @@ Write-Host "==========================================================" -Foregro
 Write-Host "Per avviare l'applicazione puoi ora utilizzare:" -ForegroundColor Yellow
 Write-Host " - Il file eseguibile: doppio clic su scripts\windows\run.bat" -ForegroundColor Yellow
 Write-Host "==========================================================" -ForegroundColor Green
+
+# 7. Verifica non bloccante: i file del modello Qwen3-VL-Embedding-2B non sono
+#    scaricabili da questo script (troppo pesanti); se mancano l'app si avvia
+#    comunque, ma la ricerca semantica/tag/OCR-via-embedding fallira' al primo uso.
+$dirQwen = Join-Path (Get-Location) "models\qwen"
+$fileRichiesti = @("llama-server.exe",
+                    "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf",
+                    "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf")
+$fileMancanti = $fileRichiesti | Where-Object { -not (Test-Path (Join-Path $dirQwen $_)) }
+if ($fileMancanti) {
+    Write-Host "`nATTENZIONE: mancano i file del modello Qwen in models\qwen\:" -ForegroundColor Yellow
+    $fileMancanti | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+    Write-Host "Copiali in models\qwen\ prima di usare la ricerca semantica (vedi README)." -ForegroundColor Yellow
+}
+
 Pause

@@ -94,15 +94,29 @@ echo -e "${GIALLO}Questa operazione potrebbe richiedere diversi minuti a seconda
 #    (torch/torchvision gia' installati dalla index CUDA/CPU corretta: pip li
 #    vedra' gia' soddisfatti. Per aggiungere una dipendenza basta requirements.txt,
 #    senza toccare questo script.)
-echo -e "\n${CIANO}[5/6] Installazione dei pacchetti base da requirements.txt (CLIP, Whisper, Streamlit, OpenCV, ChromaDB)...${RESET}"
+echo -e "\n${CIANO}[5/6] Installazione dei pacchetti base da requirements.txt (Whisper, Streamlit, OpenCV, ChromaDB)...${RESET}"
 ./venv/bin/python -m pip install -r requirements.txt
 
 # 7. Installazione modelli local-only no-deps
-echo -e "\n${CIANO}[6/6] Installazione di facenet-pytorch e easyocr (--no-deps, per evitare NumPy < 2.0)...${RESET}"
-./venv/bin/python -m pip install facenet-pytorch easyocr --no-deps
+echo -e "\n${CIANO}[6/6] Installazione di facenet-pytorch (--no-deps, per evitare NumPy < 2.0)...${RESET}"
+./venv/bin/python -m pip install facenet-pytorch --no-deps
 
 echo -e "\n${VERDE}==========================================================${RESET}"
 echo -e "${VERDE} INSTALLAZIONE COMPLETATA CON SUCCESSO!${RESET}"
 echo -e "${VERDE}==========================================================${RESET}"
 echo -e "${GIALLO}Per avviare l'applicazione: ./scripts/linux/run.sh${RESET}"
 echo -e "${VERDE}==========================================================${RESET}"
+
+# 8. Verifica non bloccante: i file del modello Qwen3-VL-Embedding-2B non sono
+#    scaricabili da questo script (troppo pesanti); se mancano l'app si avvia
+#    comunque, ma la ricerca semantica/tag/OCR-via-embedding fallira' al primo uso.
+dir_qwen="models/qwen"
+file_mancanti=()
+for f in llama-server "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf"; do
+    [ -f "$dir_qwen/$f" ] || file_mancanti+=("$f")
+done
+if [ "${#file_mancanti[@]}" -gt 0 ]; then
+    echo -e "\n${GIALLO}ATTENZIONE: mancano i file del modello Qwen in $dir_qwen/:${RESET}"
+    for f in "${file_mancanti[@]}"; do echo -e "${GIALLO}  - $f${RESET}"; done
+    echo -e "${GIALLO}Copiali in $dir_qwen/ prima di usare la ricerca semantica (vedi README).${RESET}"
+fi

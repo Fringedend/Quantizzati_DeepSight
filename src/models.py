@@ -13,71 +13,6 @@ try:
 except Exception as errore:
     print(f"Attenzione: Impossibile impostare PATH per FFmpeg tramite imageio-ffmpeg: {errore}")
 
-class GestoreCLIP:
-    """Classe di supporto per il modello CLIP (generazione embedding immagine e testo)."""
-    
-    def __init__(self, dispositivo):
-        self.dispositivo = dispositivo
-        from transformers import CLIPProcessor, CLIPModel
-        print(f"Caricamento del modello CLIP '{config.NOME_MODELLO_CLIP}' su {dispositivo}...")
-        self.modello = CLIPModel.from_pretrained(config.NOME_MODELLO_CLIP).to(dispositivo)
-        self.processore = CLIPProcessor.from_pretrained(config.NOME_MODELLO_CLIP)
-        self.modello.eval()
-        # Encoder di testo multilingue caricato pigramente (solo alla prima query di ricerca).
-        self._modello_testo_multilingue = None
-        print("Modello CLIP caricato con successo.")
-
-    def ottieni_embedding_query_testo(self, testo):
-        """Embedding normalizzato a 512-d di una query di ricerca, con encoder multilingue.
-
-        A differenza di ottieni_embedding_testo (encoder inglese di CLIP, usato per il
-        tagging), questo mappa testo in molte lingue — italiano incluso — nello stesso
-        spazio dell'encoder immagini, così la ricerca semantica in italiano è precisa.
-        """
-        if self._modello_testo_multilingue is None:
-            from sentence_transformers import SentenceTransformer
-            nome = config.NOME_MODELLO_CLIP_TESTO_MULTILINGUE
-            print(f"Caricamento dell'encoder di testo multilingue '{nome}' su {self.dispositivo}...")
-            self._modello_testo_multilingue = SentenceTransformer(nome, device=self.dispositivo)
-            print("Encoder di testo multilingue caricato con successo.")
-        # normalize_embeddings=True → norma unitaria, così np.dot restituisce il coseno
-        return self._modello_testo_multilingue.encode(
-            testo, normalize_embeddings=True, convert_to_numpy=True
-        ).astype(np.float32)
-
-    def ottieni_embedding_immagine(self, immagine_pil):
-        """Genera un embedding normalizzato a 512 dimensioni per un'immagine PIL."""
-        ingressi = self.processore(images=immagine_pil, return_tensors="pt").to(self.dispositivo)
-        with torch.no_grad():
-            caratteristiche_immagine = self.modello.get_image_features(**ingressi)
-        
-        # Gestisce BaseModelOutputWithPooling restituito dalle versioni più recenti delle librerie transformers
-        if hasattr(caratteristiche_immagine, "pooler_output") and caratteristiche_immagine.pooler_output is not None:
-            caratteristiche_immagine = caratteristiche_immagine.pooler_output
-            
-        # Normalizza il vettore a lunghezza unitaria per la similarità del coseno
-        caratteristiche_immagine = caratteristiche_immagine / caratteristiche_immagine.norm(dim=-1, keepdim=True)
-        return caratteristiche_immagine.cpu().numpy()[0]
-
-    def ottieni_embedding_testo(self, testo):
-        """Genera un embedding normalizzato a 512 dimensioni per una query di testo."""
-        ingressi = self.processore(text=[testo], return_tensors="pt", padding=True).to(self.dispositivo)
-        with torch.no_grad():
-            caratteristiche_testo = self.modello.get_text_features(**ingressi)
-            
-        # Gestisce BaseModelOutputWithPooling
-        if hasattr(caratteristiche_testo, "pooler_output") and caratteristiche_testo.pooler_output is not None:
-            caratteristiche_testo = caratteristiche_testo.pooler_output
-            
-        # Normalizza a lunghezza unitaria
-        caratteristiche_testo = caratteristiche_testo / caratteristiche_testo.norm(dim=-1, keepdim=True)
-        return caratteristiche_testo.cpu().numpy()[0]
-
-    def ottieni_scala_logit(self):
-        """Restituisce la scala logit (temperatura) appresa da CLIP per il calcolo del softmax."""
-        with torch.no_grad():
-            return self.modello.logit_scale.exp().item()
-
 class GestoreQwen:
     """Embedding multimodali Qwen3-VL-2B tramite sottoprocesso llama-server (CPU).
 
@@ -204,33 +139,6 @@ class RiconoscitoreVolti:
                 
         return risultati
 
-class GestoreOCR:
-    """Classe di supporto per l'estrazione di testo da immagini tramite EasyOCR."""
-    
-    def __init__(self, dispositivo):
-        import easyocr
-        usa_gpu = (dispositivo == "cuda")
-        print(f"Caricamento di EasyOCR (gpu={usa_gpu}) per le lingue {config.LINGUE_EASYOCR}...")
-        # verbose=False: la progress bar di download di EasyOCR stampa '█' (U+2588),
-        # che crasha se stdout è ridirezionato su Windows (encoding cp1252).
-        self.lettore = easyocr.Reader(config.LINGUE_EASYOCR, gpu=usa_gpu, verbose=False)
-        print("EasyOCR caricato con successo.")
-
-    def estrai_testo(self, img_np_o_percorso):
-        """
-        Estrae tutto il testo rilevato da un'immagine.
-        Accetta sia un percorso file sia un array NumPy (formato OpenCV BGR/RGB).
-        Restituisce una stringa di testo concatenata.
-        """
-        try:
-            # readtext restituisce: [([[x,y],[x,y],[x,y],[x,y]], testo, confidenza), ...]
-            risultati = self.lettore.readtext(img_np_o_percorso)
-            testi = [r[1] for r in risultati if r[2] > 0.35] # Filtra letture a bassa confidenza
-            return " ".join(testi).strip()
-        except Exception as errore:
-            print(f"Lettura OCR fallita: {errore}")
-            return ""
-
 class GestoreWhisper:
     """Classe di supporto per la trascrizione audio tramite Whisper."""
     
@@ -292,32 +200,18 @@ class GestoreModelli:
         else: # "auto"
             self.dispositivo = "cuda" if gpu_disponibile else "cpu"
             
-        self._clip = None
         self._volti = None
-        self._ocr = None
         self._whisper = None
         self._qwen = None
         # Il caricamento pigro può avvenire sia dalla UI sia dal thread di
         # elaborazione in background: il lock evita doppi caricamenti concorrenti.
         self._lock = threading.Lock()
 
-    def ottieni_clip(self) -> GestoreCLIP:
-        with self._lock:
-            if self._clip is None:
-                self._clip = GestoreCLIP(self.dispositivo)
-        return self._clip
-
     def ottieni_volti(self) -> RiconoscitoreVolti:
         with self._lock:
             if self._volti is None:
                 self._volti = RiconoscitoreVolti(self.dispositivo)
         return self._volti
-
-    def ottieni_ocr(self) -> GestoreOCR:
-        with self._lock:
-            if self._ocr is None:
-                self._ocr = GestoreOCR(self.dispositivo)
-        return self._ocr
 
     def ottieni_whisper(self) -> GestoreWhisper:
         with self._lock:
@@ -333,9 +227,7 @@ class GestoreModelli:
 
     def libera_memoria(self):
         """Rilascia i modelli per liberare la memoria GPU e RAM quando richiesto."""
-        self._clip = None
         self._volti = None
-        self._ocr = None
         self._whisper = None
         if self._qwen is not None:
             self._qwen.server.ferma()
