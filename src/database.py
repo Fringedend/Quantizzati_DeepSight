@@ -10,7 +10,7 @@ from config import ottieni_archivio_vettoriale
 _store_frame = None
 _store_volti = None
 try:
-    _store_frame = ottieni_archivio_vettoriale("clip_frames")
+    _store_frame = ottieni_archivio_vettoriale("qwen_frames")
     _store_volti = ottieni_archivio_vettoriale("faces")
 except Exception as errore:
     print(f"Errore durante l'inizializzazione degli archivi vettoriali: {errore}")
@@ -85,12 +85,257 @@ def inizializza_db():
     cursore.execute("CREATE INDEX IF NOT EXISTS idx_creation_date ON media_items(creation_date);")
     cursore.execute("CREATE INDEX IF NOT EXISTS idx_frames_media ON media_frames(media_id);")
     cursore.execute("CREATE INDEX IF NOT EXISTS idx_faces_media ON faces(media_id);")
-    
+
+    # Tabella chiave/valore per lo stato runtime (es. pausa della coda)
+    cursore.execute("""
+    CREATE TABLE IF NOT EXISTS impostazioni (
+        chiave TEXT PRIMARY KEY,
+        valore TEXT
+    );
+    """)
+
+    # Tabella delle persone (raggruppamento dei volti per il Face Database)
+    cursore.execute("""
+    CREATE TABLE IF NOT EXISTS persons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT
+    );
+    """)
+
+    connessione.commit()
+    _migra_schema_v07(connessione)
+    connessione.close()
+    _sincronizza_indici_vettoriali()
+
+def _migra_schema_v07(connessione):
+    """Migrazione v0.7: colonne di stadio su media_items, person_id sui volti,
+    azzeramento degli embedding CLIP 512-d (incompatibili con Qwen 2048-d).
+
+    Eseguita UNA volta sola (flag in impostazioni): il backfill degli stadi
+    marcherebbe come 'fatti' gli stadi legittimamente pendenti dei media v0.7."""
+    cursore = connessione.cursor()
+    cursore.execute("SELECT valore FROM impostazioni WHERE chiave = 'migrazione_v07_fatta'")
+    if cursore.fetchone():
+        return
+
+    colonne_media = {r[1] for r in cursore.execute("PRAGMA table_info(media_items)")}
+    for colonna in ("stato_embedding", "stato_volti", "stato_trascrizione"):
+        if colonna not in colonne_media:
+            cursore.execute(f"ALTER TABLE media_items ADD COLUMN {colonna} INTEGER DEFAULT 0")
+
+    colonne_volti = {r[1] for r in cursore.execute("PRAGMA table_info(faces)")}
+    if "person_id" not in colonne_volti:
+        cursore.execute("ALTER TABLE faces ADD COLUMN person_id INTEGER REFERENCES persons(id)")
+        cursore.execute("CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id)")
+
+    # Embedding della vecchia era CLIP (512 float32 = 2048 byte): vanno rigenerati.
+    # Si azzerano i BLOB e si rimettono in coda i media interessati.
+    cursore.execute("SELECT COUNT(*) FROM media_frames WHERE clip_embedding IS NOT NULL "
+                    "AND LENGTH(clip_embedding) != ?", (config.DIM_EMBEDDING_QWEN * 4,))
+    if cursore.fetchone()[0] > 0:
+        print("Migrazione: trovati embedding CLIP 512-d, verranno rigenerati con Qwen.")
+        cursore.execute("""
+            UPDATE media_items SET stato_embedding = 0 WHERE id IN (
+                SELECT DISTINCT media_id FROM media_frames
+                WHERE clip_embedding IS NOT NULL AND LENGTH(clip_embedding) != ?)
+        """, (config.DIM_EMBEDDING_QWEN * 4,))
+        cursore.execute("UPDATE media_frames SET clip_embedding = NULL "
+                        "WHERE clip_embedding IS NOT NULL AND LENGTH(clip_embedding) != ?",
+                        (config.DIM_EMBEDDING_QWEN * 4,))
+    # Archivi pre-v0.7 gia' elaborati: volti e trascrizione esistono gia'
+    cursore.execute("UPDATE media_items SET stato_volti = 1, stato_trascrizione = 1 "
+                    "WHERE processed = 1 AND stato_volti = 0 AND id IN "
+                    "(SELECT DISTINCT media_id FROM media_frames)")
+    cursore.execute("INSERT INTO impostazioni (chiave, valore) VALUES ('migrazione_v07_fatta', '1')")
+    connessione.commit()
+
+def leggi_impostazione(chiave, default=None):
+    connessione = ottieni_connessione()
+    riga = connessione.execute("SELECT valore FROM impostazioni WHERE chiave = ?", (chiave,)).fetchone()
+    connessione.close()
+    return riga[0] if riga else default
+
+def scrivi_impostazione(chiave, valore):
+    connessione = ottieni_connessione()
+    connessione.execute("INSERT INTO impostazioni (chiave, valore) VALUES (?, ?) "
+                        "ON CONFLICT(chiave) DO UPDATE SET valore = excluded.valore",
+                        (chiave, str(valore)))
     connessione.commit()
     connessione.close()
 
-    # Popola gli indici Chroma dai BLOB SQLite se vuoti (primo avvio dopo l'aggiornamento)
-    _sincronizza_indici_vettoriali()
+def crea_frame(id_media, indice_frame, secondi_timestamp, percorso_immagine):
+    """Registra un frame SENZA embedding (lo stadio embedding lo riempira' poi)."""
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    cursore.execute("""
+    INSERT INTO media_frames (media_id, frame_index, timestamp_seconds, image_path, ocr_text, objects, clip_embedding)
+    VALUES (?, ?, ?, ?, '', '[]', NULL)
+    """, (id_media, indice_frame, secondi_timestamp, percorso_immagine))
+    id_frame = cursore.lastrowid
+    connessione.commit()
+    connessione.close()
+    return id_frame
+
+def aggiorna_embedding_frame(id_frame, id_media, embedding, oggetti):
+    """Scrive embedding Qwen (colonna storica 'clip_embedding') e tag, e aggiorna Chroma."""
+    connessione = ottieni_connessione()
+    connessione.execute("UPDATE media_frames SET clip_embedding = ?, objects = ? WHERE id = ?",
+                        (serializza_vettore(embedding), json.dumps(list(oggetti)), id_frame))
+    connessione.commit()
+    connessione.close()
+    if _store_frame is not None:
+        try:
+            _store_frame.aggiungi_o_aggiorna([id_frame], [embedding], [{"media_id": id_media}])
+        except Exception as errore:
+            print(f"Errore inserimento vettoriale frame {id_frame}: {errore}")
+
+def ottieni_frame_di_media(id_media):
+    connessione = ottieni_connessione()
+    righe = connessione.execute(
+        "SELECT id, image_path, clip_embedding IS NOT NULL FROM media_frames "
+        "WHERE media_id = ? ORDER BY frame_index", (id_media,)).fetchall()
+    connessione.close()
+    return [{"id": r[0], "image_path": r[1], "clip_embedding_presente": bool(r[2])} for r in righe]
+
+def imposta_stato_stadio(id_media, colonna, valore):
+    assert colonna in ("stato_embedding", "stato_volti", "stato_trascrizione"), colonna
+    connessione = ottieni_connessione()
+    connessione.execute(f"UPDATE media_items SET {colonna} = ? WHERE id = ?", (valore, id_media))
+    connessione.commit()
+    connessione.close()
+
+def prossimo_media_in_coda():
+    """Prossimo elemento da lavorare: prima le preparazioni (processed=0, veloci:
+    miniatura+EXIF+frame), poi gli stadi AI pendenti. None se la coda e' vuota."""
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    cursore.execute("SELECT * FROM media_items WHERE processed = 0 ORDER BY id LIMIT 1")
+    riga = cursore.fetchone()
+    if riga is None:
+        cursore.execute("""SELECT * FROM media_items WHERE processed = 1
+            AND (stato_embedding = 0 OR stato_volti = 0 OR stato_trascrizione = 0)
+            ORDER BY id LIMIT 1""")
+        riga = cursore.fetchone()
+    colonne = [c[0] for c in cursore.description] if riga else []
+    connessione.close()
+    return dict(zip(colonne, riga)) if riga else None
+
+def conteggio_coda():
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    def _conta(sql):
+        cursore.execute(sql)
+        return cursore.fetchone()[0]
+    conteggi = {
+        "da_preparare": _conta("SELECT COUNT(*) FROM media_items WHERE processed = 0"),
+        "embedding": _conta("SELECT COUNT(*) FROM media_items WHERE processed = 1 AND stato_embedding = 0"),
+        "volti": _conta("SELECT COUNT(*) FROM media_items WHERE processed = 1 AND stato_volti = 0"),
+        "trascrizione": _conta("SELECT COUNT(*) FROM media_items WHERE processed = 1 AND stato_trascrizione = 0"),
+        "falliti": _conta("SELECT COUNT(*) FROM media_items WHERE processed = -1 "
+                          "OR stato_embedding = -1 OR stato_volti = -1 OR stato_trascrizione = -1"),
+    }
+    connessione.close()
+    return conteggi
+
+def elimina_volti_di_media(id_media):
+    """Rimuove volti (righe, ritagli su disco, vettori Chroma) di un media: rende
+    idempotente la riesecuzione dello stadio volti dopo un fallimento."""
+    connessione = ottieni_connessione()
+    righe = connessione.execute("SELECT id, crop_path FROM faces WHERE media_id = ?", (id_media,)).fetchall()
+    connessione.execute("DELETE FROM faces WHERE media_id = ?", (id_media,))
+    connessione.commit()
+    connessione.close()
+    if _store_volti is not None and righe:
+        try:
+            _store_volti.elimina([r[0] for r in righe])
+        except Exception as errore:
+            print(f"Errore rimozione vettori volto per media {id_media}: {errore}")
+    for _, percorso in righe:
+        if percorso and os.path.exists(percorso):
+            try:
+                os.remove(percorso)
+            except OSError:
+                pass
+
+def crea_persona():
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    cursore.execute("INSERT INTO persons (name) VALUES (NULL)")
+    id_persona = cursore.lastrowid
+    connessione.commit()
+    connessione.close()
+    return id_persona
+
+def assegna_volto_a_persona(id_volto, id_persona):
+    connessione = ottieni_connessione()
+    connessione.execute("UPDATE faces SET person_id = ? WHERE id = ?", (id_persona, id_volto))
+    connessione.commit()
+    connessione.close()
+
+def ottieni_embedding_volti_per_persona():
+    """{id_persona: [embedding, ...]} per il calcolo dei centroidi (persone.py)."""
+    connessione = ottieni_connessione()
+    righe = connessione.execute(
+        "SELECT person_id, embedding FROM faces WHERE person_id IS NOT NULL").fetchall()
+    connessione.close()
+    per_persona = {}
+    for id_persona, blob in righe:
+        emb = deserializza_vettore(blob)
+        if emb is not None:
+            per_persona.setdefault(id_persona, []).append(emb)
+    return per_persona
+
+def ottieni_persone():
+    """Elenco persone con conteggi e ritaglio rappresentativo. Elimina le persone
+    rimaste senza volti (es. dopo la cancellazione dei media)."""
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    cursore.execute("DELETE FROM persons WHERE id NOT IN "
+                    "(SELECT DISTINCT person_id FROM faces WHERE person_id IS NOT NULL)")
+    connessione.commit()
+    cursore.execute("""
+        SELECT p.id, p.name, COUNT(f.id), COUNT(DISTINCT f.media_id), MIN(f.crop_path)
+        FROM persons p JOIN faces f ON f.person_id = p.id
+        GROUP BY p.id, p.name ORDER BY COUNT(f.id) DESC
+    """)
+    righe = cursore.fetchall()
+    connessione.close()
+    return [{"id": r[0], "name": r[1], "n_volti": r[2], "n_media": r[3], "crop_path": r[4]}
+            for r in righe]
+
+def ottieni_media_di_persona(id_persona):
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    cursore.execute("""
+        SELECT DISTINCT m.* FROM media_items m JOIN faces f ON f.media_id = m.id
+        WHERE f.person_id = ? ORDER BY m.creation_date DESC
+    """, (id_persona,))
+    righe = cursore.fetchall()
+    colonne = [c[0] for c in cursore.description]
+    connessione.close()
+    return [dict(zip(colonne, r)) for r in righe]
+
+def rinomina_persona(id_persona, nome):
+    connessione = ottieni_connessione()
+    connessione.execute("UPDATE persons SET name = ? WHERE id = ?", (nome or None, id_persona))
+    connessione.commit()
+    connessione.close()
+
+def unisci_persone(id_da, id_a):
+    """Sposta tutti i volti di id_da su id_a (il nome di id_a prevale) ed elimina id_da."""
+    connessione = ottieni_connessione()
+    connessione.execute("UPDATE faces SET person_id = ? WHERE person_id = ?", (id_a, id_da))
+    connessione.execute("DELETE FROM persons WHERE id = ?", (id_da,))
+    connessione.commit()
+    connessione.close()
+
+def azzera_persone():
+    """Scollega tutti i volti e svuota persons (per il re-clustering completo)."""
+    connessione = ottieni_connessione()
+    connessione.execute("UPDATE faces SET person_id = NULL")
+    connessione.execute("DELETE FROM persons")
+    connessione.commit()
+    connessione.close()
 
 def serializza_vettore(vettore):
     """Converte un array NumPy in byte binari per il salvataggio nel database SQL (BLOB)."""
