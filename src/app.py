@@ -766,7 +766,7 @@ if esito:
 
 contenitore_navbar = st.container(key="navbar")
 with contenitore_navbar:
-    col_nav1, col_nav2, col_nav3, col_nav4 = st.columns([1, 1, 1, 0.35])
+    col_nav1, col_nav2, col_nav3, col_nav4, col_nav5 = st.columns([1, 1, 1, 1, 0.35])
 
 with col_nav1:
     attivo_dashboard = st.session_state.selezione_menu == "📊 Dashboard"
@@ -786,9 +786,15 @@ with col_nav3:
         st.session_state.selezione_menu = "🔍 Ricerca Avanzata"
         st.rerun()
 
+with col_nav4:
+    attivo_persone = st.session_state.selezione_menu == "👤 Persone"
+    if st.button("👤 Persone", width='stretch', key="nav_persone", type="primary" if attivo_persone else "secondary"):
+        st.session_state.selezione_menu = "👤 Persone"
+        st.rerun()
+
 # Scudo: apre il controllo integrità in un pannello a comparsa. Il badge mostra quanti
 # problemi sono stati rilevati (file intrusi + record orfani).
-with col_nav4:
+with col_nav5:
     with st.container(key="nav_integrita"):
         etichetta_scudo = f"🛡️ {n_problemi}" if n_problemi else "🛡️"
         with st.popover(etichetta_scudo, width='stretch',
@@ -1077,6 +1083,98 @@ elif menu == "📤 Caricamento & Import":
                 with st.spinner("Scansione in corso..."):
                     conteggio_successi, conteggio_fallimenti = processor.scansiona_cartella_condivisa(percorso_cartella_condivisa)
                     st.success(f"Scansione completata! Nuovi file elaborati con successo: {conteggio_successi}. File falliti: {conteggio_fallimenti}.")
+
+
+# --- SCHEDA PERSONE (Face Database) ---
+elif menu == "👤 Persone":
+    st.markdown("<h1 class='main-title'>Persone</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='subtitle'>Tutte le persone riconosciute nell'archivio. Clicca una persona per vedere i suoi contenuti e assegnarle un nome.</p>", unsafe_allow_html=True)
+
+    import persone as modulo_persone
+    lista_persone = database.ottieni_persone()
+
+    if st.button("🔄 Ricalcola raggruppamenti", key="btn_recluster",
+                 help="Riesegue il clustering di tutti i volti (i nomi vengono preservati)"):
+        with st.spinner("Re-clustering dei volti in corso..."):
+            n = modulo_persone.ricalcola_tutti_cluster()
+        st.toast(f"Raggruppamento completato: {n} persone.", icon="✅")
+        st.rerun()
+
+    if not lista_persone:
+        st.info("Nessun volto ancora rilevato: carica contenuti e attendi lo stadio 'volti' della coda.")
+    else:
+        id_selezionata = st.session_state.get("persona_selezionata")
+
+        if id_selezionata is None:
+            # griglia delle persone
+            with st.container(key="risultati_griglia"):
+                for p in lista_persone:
+                    with st.container():
+                        nome = p["name"] or f"Persona {p['id']}"
+                        st.markdown(f"""
+                        <div class="result-card"><div class="result-meta">
+                            <div class="result-title">{nome}</div>
+                            <div style="opacity:0.7; font-size:0.8rem;">
+                                {p['n_media']} contenuti · {p['n_volti']} volti</div>
+                        </div></div>""", unsafe_allow_html=True)
+                        if p["crop_path"] and os.path.exists(p["crop_path"]):
+                            st.image(p["crop_path"], width="stretch")
+                        if st.button("Apri", key=f"apri_persona_{p['id']}", width='stretch'):
+                            st.session_state["persona_selezionata"] = p["id"]
+                            st.rerun()
+        else:
+            persona = next((p for p in lista_persone if p["id"] == id_selezionata), None)
+            if persona is None:
+                st.session_state.pop("persona_selezionata", None)
+                st.rerun()
+            if st.button("← Tutte le persone", key="btn_indietro_persone"):
+                st.session_state.pop("persona_selezionata", None)
+                st.rerun()
+
+            col_p1, col_p2 = st.columns([1, 2])
+            with col_p1:
+                if persona["crop_path"] and os.path.exists(persona["crop_path"]):
+                    st.container(key="volti_query").image(persona["crop_path"], width=160)
+            with col_p2:
+                nuovo_nome = st.text_input("Nome", value=persona["name"] or "", key=f"nome_p_{persona['id']}")
+                if st.button("💾 Salva nome", key=f"salva_nome_{persona['id']}"):
+                    database.rinomina_persona(persona["id"], nuovo_nome.strip())
+                    st.toast("Nome salvato.", icon="✅")
+                    st.rerun()
+                altre = [p for p in lista_persone if p["id"] != persona["id"]]
+                if altre:
+                    etichette = {f"{p['name'] or 'Persona ' + str(p['id'])} (#{p['id']})": p["id"] for p in altre}
+                    scelta = st.selectbox("Unisci con...", ["—"] + list(etichette), key=f"merge_sel_{persona['id']}")
+                    if scelta != "—" and st.button("🔗 Unisci (i volti passano a questa persona)", key=f"merge_btn_{persona['id']}"):
+                        database.unisci_persone(etichette[scelta], persona["id"])
+                        st.toast("Persone unite.", icon="✅")
+                        st.rerun()
+
+            nome_persona = persona["name"] or f"Persona {persona['id']}"
+            st.markdown(f"### Contenuti con {nome_persona}")
+            media_persona = database.ottieni_media_di_persona(persona["id"])
+            with st.container(key="galleria_griglia"):
+                for elemento in media_persona:
+                    with st.container():
+                        st.markdown(f"""
+                        <div class="result-card"><div class="result-meta">
+                            <div class="result-title" title="{elemento['filename']}">{elemento['filename']}</div>
+                            <div style="opacity:0.7; font-size:0.8rem;">
+                                Tipo: {elemento['media_type'].upper()}<br>
+                                📅 {elemento['creation_date'].split('T')[0] if elemento['creation_date'] else 'N/D'}</div>
+                        </div></div>""", unsafe_allow_html=True)
+                        if elemento["media_type"] == "image" and os.path.exists(elemento["file_path"]):
+                            st.image(immagine_per_display(elemento["file_path"], lato_max=1000), width="stretch")
+                        else:
+                            anteprima = percorso_anteprima_elemento(elemento["file_path"])
+                            if anteprima:
+                                st.image(anteprima, width="stretch")
+                        if os.path.exists(elemento["file_path"]):
+                            with open(elemento["file_path"], "rb") as dati_file:
+                                st.download_button("⬇️ Scarica", data=dati_file,
+                                                   file_name=elemento["filename"],
+                                                   mime="application/octet-stream",
+                                                   key=f"persona_dl_{persona['id']}_{elemento['id']}")
 
 
 # --- 4. SCHEDA RICERCA AVANZATA ---
