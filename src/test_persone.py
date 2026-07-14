@@ -62,6 +62,13 @@ def esegui_test():
     persone_alice = [p for p in database.ottieni_persone() if p["name"] == "Alice"]
     assert len(persone_alice) <= 1, persone_alice
     assert n == 4, n  # p1/p2, p3, carlo, dora: 4 cluster distinti
+
+    # crea_persona_con_volto: persona creata e volto assegnato in un'unica chiamata
+    # (atomicita' che evita la potatura di ottieni_persone tra crea e assegna)
+    v6 = database.aggiungi_volto(id_media, id_frame, "/tmp/e1.jpg", _vettore(99), [0, 0, 1, 1])
+    id_persona_nuova = database.crea_persona_con_volto(v6)
+    persone_dopo = {p["id"]: p for p in database.ottieni_persone()}
+    assert id_persona_nuova in persone_dopo and persone_dopo[id_persona_nuova]["n_volti"] == 1
     print("test_persone: OK")
 
 if __name__ == "__main__":

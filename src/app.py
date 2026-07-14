@@ -1101,7 +1101,8 @@ elif menu == "👤 Persone":
         st.rerun()
 
     if not lista_persone:
-        st.info("Nessun volto ancora rilevato: carica contenuti e attendi lo stadio 'volti' della coda.")
+        st.info("Nessuna persona: carica contenuti e attendi lo stadio 'volti' della coda, "
+                "oppure usa 🔄 Ricalcola raggruppamenti se l'archivio contiene già volti.")
     else:
         id_selezionata = st.session_state.get("persona_selezionata")
 

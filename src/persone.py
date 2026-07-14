@@ -31,7 +31,9 @@ def assegna_persona(embedding, id_volto):
         if sim > migliore_sim:
             migliore_id, migliore_sim = id_persona, sim
     if migliore_id is None or migliore_sim < config.SOGLIA_SIMILARITA_VOLTI:
-        migliore_id = database.crea_persona()
+        # crea+assegna in una transazione sola: una persona senza volti verrebbe
+        # potata da ottieni_persone() prima della UPDATE (race con il worker)
+        return database.crea_persona_con_volto(id_volto)
     database.assegna_volto_a_persona(id_volto, migliore_id)
     return migliore_id
 
@@ -65,8 +67,10 @@ def ricalcola_tutti_cluster():
     voti = {}  # (nome, etichetta) -> conteggio
     for volto, etichetta in zip(volti, etichette):
         if etichetta not in persona_per_etichetta:
-            persona_per_etichetta[etichetta] = database.crea_persona()
-        database.assegna_volto_a_persona(volto["face_id"], persona_per_etichetta[etichetta])
+            # primo volto del cluster: crea+assegna atomico (stessa race di assegna_persona)
+            persona_per_etichetta[etichetta] = database.crea_persona_con_volto(volto["face_id"])
+        else:
+            database.assegna_volto_a_persona(volto["face_id"], persona_per_etichetta[etichetta])
         vecchio_nome = vecchi_nomi.get(volto_a_vecchia_persona.get(volto["face_id"]))
         if vecchio_nome:
             chiave = (vecchio_nome, etichetta)
