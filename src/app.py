@@ -52,18 +52,47 @@ st.sidebar.markdown(
 # del brand), così restano leggibili su qualunque tema di Streamlit senza doverlo rilevare.
 st.markdown("""
 <style>
+    /* Font Inter da Google Fonts (se offline, ricade sui sans-serif di sistema).
+       L'@import DEVE precedere ogni altra regola: messo dopo, la spec CSS lo ignora. */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    /* Token di design. Convenzione naming: i token nuovi sono in italiano
+       (--gradiente-*, --raggio-*, --spazio-*, --accento-*); le varianti -rgb
+       seguono la lingua del token base (--accent-1 -> --accent-1-rgb). */
     :root {
         --accent-1: #00C6FF;
         --accent-2: #0072FF;
+        /* Canali RGB degli accenti: permettono rgba(var(--accent-N-rgb), alpha) senza
+           ricopiare i valori numerici a ogni variante traslucida (aloni, ombre, focus). */
+        --accent-1-rgb: 0, 198, 255;
+        --accent-2-rgb: 0, 114, 255;
         --accent-testo: #1f8fd6;   /* blu medio leggibile sia su chiaro sia su scuro */
+        --gradiente-accento: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+        /* Stati semantici (avviso -> pericolo): usati dal pulsante scudo integrità e
+           riusabili per futuri toast/messaggi d'errore. */
+        --accento-avviso: #FF9800;
+        --accento-pericolo: #F44336;
+        --accento-pericolo-rgb: 244, 67, 54;
+        --gradiente-pericolo: linear-gradient(135deg, var(--accento-avviso), var(--accento-pericolo));
         --superficie: rgba(130, 130, 150, 0.10);
         --superficie-2: rgba(130, 130, 150, 0.16);
         --bordo: rgba(130, 130, 150, 0.30);
         --ombra-card: rgba(0, 0, 0, 0.18);
         --scroll-thumb: rgba(130, 130, 150, 0.55);
+        /* Scala dei raggi (valori esistenti, ora centralizzati) */
+        --raggio-xs: 4px;
+        --raggio-sm: 10px;
+        --raggio-md: 12px;
+        --raggio-lg: 16px;
+        --raggio-pill: 20px;
+        --raggio-nav: 24px;
+        /* Scala delle spaziature */
+        --spazio-1: 4px;
+        --spazio-2: 8px;
+        --spazio-3: 12px;
+        --spazio-4: 16px;
+        --spazio-5: 24px;
     }
-    /* Font Inter da Google Fonts (se offline, ricade sui sans-serif di sistema) */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
     /* Applica Inter a tutta l'app */
     html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
@@ -74,8 +103,8 @@ st.markdown("""
        (non 'background'), così il colore di sfondo del tema nativo scuro/chiaro resta. */
     .stApp {
         background-image:
-            radial-gradient(1100px 550px at 12% -12%, rgba(0, 114, 255, 0.08), transparent 60%),
-            radial-gradient(900px 500px at 105% -5%, rgba(0, 198, 255, 0.06), transparent 55%);
+            radial-gradient(1100px 550px at 12% -12%, rgba(var(--accent-2-rgb), 0.08), transparent 60%),
+            radial-gradient(900px 500px at 105% -5%, rgba(var(--accent-1-rgb), 0.06), transparent 55%);
     }
     
     /* Nasconde l'icona-link ancora che Streamlit aggiunge accanto a ogni titolo */
@@ -93,14 +122,14 @@ st.markdown("""
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
         padding: 0.5rem 0.6rem;
-        border-radius: 12px;
+        border-radius: var(--raggio-md);
     }
 
     /* Stile dei titoli */
     .main-title {
         font-family: 'Inter', sans-serif;
         font-weight: 800;
-        background: linear-gradient(135deg, #00C6FF, #0072FF);
+        background: var(--gradiente-accento);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-size: 2.8rem;
@@ -117,8 +146,8 @@ st.markdown("""
     .metric-container {
         background: var(--superficie);
         border: 1px solid var(--bordo);
-        border-radius: 16px;
-        padding: 24px;
+        border-radius: var(--raggio-lg);
+        padding: var(--spazio-5);
         box-shadow: 0 4px 30px var(--ombra-card);
         backdrop-filter: blur(5px);
         text-align: center;
@@ -126,8 +155,8 @@ st.markdown("""
     }
     .metric-container:hover {
         transform: translateY(-5px);
-        border-color: rgba(0, 198, 255, 0.3);
-        box-shadow: 0 10px 30px rgba(0, 198, 255, 0.1);
+        border-color: rgba(var(--accent-1-rgb), 0.3);
+        box-shadow: 0 10px 30px rgba(var(--accent-1-rgb), 0.1);
     }
     .metric-value {
         font-size: 2.2rem;
@@ -146,7 +175,7 @@ st.markdown("""
     .result-card {
         background: var(--superficie);
         border: 1px solid var(--bordo);
-        border-radius: 12px;
+        border-radius: var(--raggio-md);
         overflow: hidden;
         padding: 0;
         margin-bottom: 20px;
@@ -156,10 +185,10 @@ st.markdown("""
     .result-card:hover {
         transform: translateY(-4px);
         border-color: var(--accent-2);
-        box-shadow: 0 12px 24px rgba(0, 114, 255, 0.25);
+        box-shadow: 0 12px 24px rgba(var(--accent-2-rgb), 0.25);
     }
     .result-meta {
-        padding: 12px;
+        padding: var(--spazio-3);
         font-size: 0.85rem;
     }
     .result-title {
@@ -171,10 +200,10 @@ st.markdown("""
         margin-bottom: 6px;
     }
     .result-score {
-        background: linear-gradient(135deg, #00C6FF, #0072FF);
+        background: var(--gradiente-accento);
         color: white;
         padding: 2px 8px;
-        border-radius: 20px;
+        border-radius: var(--raggio-pill);
         font-weight: 700;
         font-size: 0.8rem;
         display: inline-block;
@@ -184,17 +213,17 @@ st.markdown("""
     /* Stile dei tag */
     .tag-pill {
         background: var(--superficie-2);
-        padding: 2px 8px;
-        border-radius: 4px;
+        padding: 2px var(--spazio-2);
+        border-radius: var(--raggio-xs);
         font-size: 0.75rem;
-        margin-right: 4px;
-        margin-bottom: 4px;
+        margin-right: var(--spazio-1);
+        margin-bottom: var(--spazio-1);
         display: inline-block;
     }
     
     /* Stile pulsanti della barra di navigazione */
     div[data-testid="stColumn"] button {
-        border-radius: 24px !important;
+        border-radius: var(--raggio-nav) !important;
         font-weight: 700 !important;
         font-size: 1rem !important;
         transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
@@ -210,19 +239,19 @@ st.markdown("""
     div[data-testid="stColumn"] button[kind="secondary"]:hover {
         color: var(--accent-testo) !important;
         border-color: var(--accent-1) !important;
-        background: rgba(0, 198, 255, 0.05) !important;
-        box-shadow: 0 0 15px rgba(0, 198, 255, 0.15) !important;
+        background: rgba(var(--accent-1-rgb), 0.05) !important;
+        box-shadow: 0 0 15px rgba(var(--accent-1-rgb), 0.15) !important;
     }
     
     /* Pulsanti primari (attivi) */
     div[data-testid="stColumn"] button[kind="primary"] {
-        background: linear-gradient(135deg, #00C6FF, #0072FF) !important;
+        background: var(--gradiente-accento) !important;
         border: none !important;
         color: white !important;
-        box-shadow: 0 4px 15px rgba(0, 114, 255, 0.35) !important;
+        box-shadow: 0 4px 15px rgba(var(--accent-2-rgb), 0.35) !important;
     }
     div[data-testid="stColumn"] button[kind="primary"]:hover {
-        box-shadow: 0 6px 20px rgba(0, 114, 255, 0.5) !important;
+        box-shadow: 0 6px 20px rgba(var(--accent-2-rgb), 0.5) !important;
         transform: translateY(-1px);
     }
 
@@ -245,15 +274,15 @@ st.markdown("""
         border-bottom: 1px solid var(--bordo);
     }
     .stTabs [data-baseweb="tab"] {
-        border-radius: 10px 10px 0 0;
-        padding: 8px 16px;
+        border-radius: var(--raggio-sm) var(--raggio-sm) 0 0;
+        padding: var(--spazio-2) var(--spazio-4);
         opacity: 0.7;
         font-weight: 600;
     }
     .stTabs [aria-selected="true"] {
         color: var(--accent-testo) !important;
         opacity: 1;
-        background: rgba(0, 198, 255, 0.06);
+        background: rgba(var(--accent-1-rgb), 0.06);
     }
 
     /* Campi di input, selectbox e date coerenti col tema */
@@ -263,24 +292,24 @@ st.markdown("""
     div[data-baseweb="select"] > div {
         background-color: var(--superficie) !important;
         border: 1px solid var(--bordo) !important;
-        border-radius: 10px !important;
+        border-radius: var(--raggio-sm) !important;
     }
     .stTextInput input:focus,
     .stDateInput input:focus,
     div[data-baseweb="select"] > div:focus-within {
         border-color: var(--accent-1) !important;
-        box-shadow: 0 0 0 2px rgba(0, 198, 255, 0.15) !important;
+        box-shadow: 0 0 0 2px rgba(var(--accent-1-rgb), 0.15) !important;
     }
 
     /* Pulsanti generici (upload, azioni) arrotondati */
     .stButton > button {
-        border-radius: 10px;
+        border-radius: var(--raggio-sm);
     }
 
     /* Riquadri espandibili coerenti col tema */
     [data-testid="stExpander"] {
         border: 1px solid var(--bordo);
-        border-radius: 12px;
+        border-radius: var(--raggio-md);
         background: var(--superficie);
     }
 
@@ -308,14 +337,14 @@ st.markdown("""
     .st-key-risultati_griglia [data-testid="stImage"] img {
         aspect-ratio: 1 / 1;
         object-fit: cover;
-        border-radius: 12px;
+        border-radius: var(--raggio-md);
     }
     /* Anche il player video inline della dashboard segue il quadrato
        (resta riproducibile: è ritagliato, non deformato) */
     .st-key-dashboard_griglia video[data-testid="stVideo"] {
         aspect-ratio: 1 / 1;
         object-fit: cover;
-        border-radius: 12px;
+        border-radius: var(--raggio-md);
     }
     /* A schermo intero il video resta figlio della griglia, quindi le regole di ritaglio
        qui sopra continuerebbero ad applicarsi: il filmato apparirebbe croppato e con gli
@@ -366,7 +395,7 @@ st.markdown("""
     [data-testid="stElementToolbar"] button {
         background: transparent !important;
         border: none !important;
-        border-radius: 12px;
+        border-radius: var(--raggio-md);
         padding: 0 !important;
     }
     /* Stato chiuso: nessuna icona, cursore a lente d'ingrandimento. */
@@ -386,7 +415,7 @@ st.markdown("""
         display: flex;
         align-items: flex-start;
         justify-content: flex-end;
-        padding: 12px !important;
+        padding: var(--spazio-3) !important;
     }
     :is(.st-key-galleria_griglia, .st-key-dashboard_griglia, .st-key-risultati_griglia)
     [data-testid="stFullScreenFrame"]:has(button[aria-label="Close fullscreen"]) button svg {
@@ -447,15 +476,15 @@ st.markdown("""
         border-radius: 50% !important;
         font-size: 1.9rem !important;
         line-height: 1 !important;
-        background: linear-gradient(135deg, #00C6FF, #0072FF) !important;
+        background: var(--gradiente-accento) !important;
         color: white !important;
         border: none !important;
-        box-shadow: 0 6px 20px rgba(0, 114, 255, 0.45) !important;
+        box-shadow: 0 6px 20px rgba(var(--accent-2-rgb), 0.45) !important;
         transition: transform 0.2s ease, box-shadow 0.2s ease !important;
     }
     .st-key-fab_caricamento button:hover {
         transform: translateY(-2px) scale(1.05);
-        box-shadow: 0 10px 28px rgba(0, 114, 255, 0.6) !important;
+        box-shadow: 0 10px 28px rgba(var(--accent-2-rgb), 0.6) !important;
     }
     /* Nasconde la freccetta del popover accanto al "+". In Streamlit 1.59 non è un <svg>
        ma un'icona material testuale ("expand_more"), da cui il selettore sul data-testid.
@@ -483,20 +512,20 @@ st.markdown("""
        a comparsa vive in un portale fuori dal container: questi stili toccano solo il bottone. */
     .st-key-nav_integrita button {
         height: 100%;
-        border-radius: 10px !important;
+        border-radius: var(--raggio-sm) !important;
     }
     .st-key-nav_integrita button div:has(> span > [data-testid="stIconMaterial"]) { display: none; }
     /* Con problemi rilevati il pulsante diventa 'primary': accento ambra→rosso per farsi notare.
        Il doppio attributo serve a superare la specificità di
        `div[data-testid="stColumn"] button[kind="primary"]`, che colora di blu i pulsanti attivi. */
     .st-key-nav_integrita button[data-testid="stPopoverButton"][kind="primary"] {
-        background: linear-gradient(135deg, #FF9800, #F44336) !important;
+        background: var(--gradiente-pericolo) !important;
         border: none !important;
         color: white !important;
-        box-shadow: 0 4px 15px rgba(244, 67, 54, 0.35) !important;
+        box-shadow: 0 4px 15px rgba(var(--accento-pericolo-rgb), 0.35) !important;
     }
     .st-key-nav_integrita button[data-testid="stPopoverButton"][kind="primary"]:hover {
-        box-shadow: 0 6px 20px rgba(244, 67, 54, 0.5) !important;
+        box-shadow: 0 6px 20px rgba(var(--accento-pericolo-rgb), 0.5) !important;
     }
 
     /* Barra di scorrimento personalizzata */
@@ -1420,7 +1449,7 @@ elif menu == "🔍 Ricerca Avanzata":
                 # Rendering HTML della scheda dei risultati
                 st.markdown(f"""
                 <div class="result-card">
-                    <div style="background-color: var(--superficie-2); padding: 12px; border-bottom: 1px solid var(--bordo);">
+                    <div style="background-color: var(--superficie-2); padding: var(--spazio-3); border-bottom: 1px solid var(--bordo);">
                         <span class="result-score">{stringa_punteggio}</span>
                         <div class="result-title" title="{elemento['filename']}">{elemento['filename']}</div>
                         <div style="font-size: 0.8rem; opacity: 0.7;">
