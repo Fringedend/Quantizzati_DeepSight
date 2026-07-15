@@ -5,3 +5,5 @@ models/
 __pycache__/
 *.pyc
 .superpowers/
+# Cartella di lavoro locale (memoria di sessione + launch.json con percorsi assoluti)
+DeepSight v.1/

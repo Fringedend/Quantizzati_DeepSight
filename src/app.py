@@ -774,28 +774,17 @@ contenitore_navbar = st.container(key="navbar")
 with contenitore_navbar:
     col_nav1, col_nav2, col_nav3, col_nav4, col_nav5 = st.columns([1, 1, 1, 1, 0.35])
 
-with col_nav1:
-    attivo_dashboard = st.session_state.selezione_menu == "📊 Dashboard"
-    if st.button("📊 Dashboard", width='stretch', key="nav_dash", type="primary" if attivo_dashboard else "secondary"):
-        st.session_state.selezione_menu = "📊 Dashboard"
-        st.rerun()
-
-with col_nav2:
-    attivo_galleria = st.session_state.selezione_menu == "🖼️ Galleria"
-    if st.button("🖼️ Galleria", width='stretch', key="nav_gallery", type="primary" if attivo_galleria else "secondary"):
-        st.session_state.selezione_menu = "🖼️ Galleria"
-        st.rerun()
-
-with col_nav3:
-    attivo_ricerca = st.session_state.selezione_menu == "🔍 Ricerca Avanzata"
-    if st.button("🔍 Ricerca Avanzata", width='stretch', key="nav_search", type="primary" if attivo_ricerca else "secondary"):
-        st.session_state.selezione_menu = "🔍 Ricerca Avanzata"
-        st.rerun()
-
-with col_nav4:
-    attivo_persone = st.session_state.selezione_menu == "👤 Persone"
-    if st.button("👤 Persone", width='stretch', key="nav_persone", type="primary" if attivo_persone else "secondary"):
-        st.session_state.selezione_menu = "👤 Persone"
+# (etichetta, key, colonna): l'etichetta è anche il valore salvato in selezione_menu.
+voci_navbar = [
+    ("📊 Dashboard", "nav_dash", col_nav1),
+    ("🖼️ Galleria", "nav_gallery", col_nav2),
+    ("🔍 Ricerca Avanzata", "nav_search", col_nav3),
+    ("👤 Persone", "nav_persone", col_nav4),
+]
+for etichetta, key, colonna in voci_navbar:
+    attivo = st.session_state.selezione_menu == etichetta
+    if colonna.button(etichetta, width='stretch', key=key, type="primary" if attivo else "secondary"):
+        st.session_state.selezione_menu = etichetta
         st.rerun()
 
 # Scudo: apre il controllo integrità in un pannello a comparsa. Il badge mostra quanti
@@ -835,37 +824,17 @@ if menu == "📊 Dashboard":
     statistiche = database.ottieni_statistiche_db()
     
     # 4 Colonne per le metriche principali
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown(f"""
+    metriche = [
+        (statistiche['images_count'] + statistiche['videos_count'], "Elementi Indicizzati"),
+        (statistiche['frames_count'], "Frame Estratti"),
+        (statistiche['faces_count'], "Volti Rilevati"),
+        (ottieni_stringa_dimensione_file(statistiche['total_size_bytes']), "Dimensione Archivio"),
+    ]
+    for colonna, (valore, etichetta) in zip(st.columns(4), metriche):
+        colonna.markdown(f"""
         <div class="metric-container">
-            <div class="metric-value">{statistiche['images_count'] + statistiche['videos_count']}</div>
-            <div class="metric-label">Elementi Indicizzati</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with col2:
-        st.markdown(f"""
-        <div class="metric-container">
-            <div class="metric-value">{statistiche['frames_count']}</div>
-            <div class="metric-label">Frame Estratti</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with col3:
-        st.markdown(f"""
-        <div class="metric-container">
-            <div class="metric-value">{statistiche['faces_count']}</div>
-            <div class="metric-label">Volti Rilevati</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with col4:
-        st.markdown(f"""
-        <div class="metric-container">
-            <div class="metric-value">{ottieni_stringa_dimensione_file(statistiche['total_size_bytes'])}</div>
-            <div class="metric-label">Dimensione Archivio</div>
+            <div class="metric-value">{valore}</div>
+            <div class="metric-label">{etichetta}</div>
         </div>
         """, unsafe_allow_html=True)
 

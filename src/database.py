@@ -664,7 +664,7 @@ def cerca_frame_simili(query_emb, k=100):
         if _store_frame is None:
             raise RuntimeError("indice vettoriale frame non disponibile")
         # ponytail: k=100 candidati; alzalo se i filtri della UI tagliano troppi risultati
-        ids = [c[0] for c in _store_frame.cerca_simili(query_emb, migliori_k=k)]
+        ids = _store_frame.cerca_simili(query_emb, migliori_k=k)
     except Exception as errore:
         # SQLite è la fonte di verità: se Chroma manca o l'indice HNSW fallisce
         # (es. accesso concorrente da più processi, corruzione) si ripiega sullo scan completo.
@@ -725,7 +725,7 @@ def cerca_volti_simili(query_emb, k=100):
     try:
         if _store_volti is None:
             raise RuntimeError("indice vettoriale volti non disponibile")
-        ids = [c[0] for c in _store_volti.cerca_simili(query_emb, migliori_k=k)]
+        ids = _store_volti.cerca_simili(query_emb, migliori_k=k)
     except Exception as errore:
         # Come per i frame: fallback allo scan lineare SQLite su qualsiasi errore Chroma.
         if _store_volti is not None:

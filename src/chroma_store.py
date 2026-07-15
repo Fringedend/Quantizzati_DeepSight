@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import chromadb
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 
 
 # Un solo PersistentClient per cartella, riusato se la stessa cartella viene richiesta più volte.
@@ -41,7 +41,6 @@ class ChromaStore:
 
         # Recupera o crea la collezione vettoriale
         self.collezione = self.client.get_or_create_collection(name=nome_collezione)
-        self._nome = nome_collezione
 
     def aggiungi_o_aggiorna(self, id_elementi: List[int], vettori: List[np.ndarray],
                              metadati: List[Dict[str, Any]]) -> None:
@@ -56,28 +55,17 @@ class ChromaStore:
         vettori_lista = [v.tolist() for v in vettori]
         self.collezione.upsert(ids=id_stringhe, embeddings=vettori_lista, metadatas=metadati)
 
-    def cerca_simili(self, vettore: np.ndarray, migliori_k: int = 10,
-                     filtro: Dict[str, Any] | None = None) -> List[Tuple[int, float, Dict]]:
-        """Restituisce i `migliori_k` vettori più simili.
+    def cerca_simili(self, vettore: np.ndarray, migliori_k: int = 10) -> List[int]:
+        """Restituisce gli id dei `migliori_k` vettori più simili (candidati ANN).
 
-        Di default Chroma restituisce le distanze L2. Le convertiamo in un punteggio
-        di similarità compreso tra 0 e 1 tramite la formula `1 - distanza`. Questo metodo
-        funziona bene per gli embedding normalizzati di CLIP.
-        
-        Restituisce una lista di tuple: (id_documento, punteggio_similarita, metadati).
+        Solo gli id: il punteggio esatto (coseno) viene ricalcolato dal chiamante
+        sui BLOB in SQLite, quindi le distanze L2 di Chroma non servono.
         """
         risultati = self.collezione.query(
             query_embeddings=[vettore.tolist()],
             n_results=migliori_k,
-            where=filtro,
         )
-        id_stringhe = risultati["ids"][0]
-        distanze = risultati["distances"][0]
-        metadati_risultato = risultati["metadatas"][0]
-        
-        # Converte le distanze L2 in punteggi di similarità
-        punteggi_similarita = [1.0 - d for d in distanze]
-        return [(int(i), sim, meta) for i, sim, meta in zip(id_stringhe, punteggi_similarita, metadati_risultato)]
+        return [int(i) for i in risultati["ids"][0]]
 
     def elimina(self, id_elementi: List[int]) -> None:
         """Rimuove dall'archivio vettoriale i vettori identificati dagli `id_elementi`."""
@@ -88,7 +76,3 @@ class ChromaStore:
     def conteggio(self) -> int:
         """Restituisce il numero di vettori presenti nella collezione."""
         return self.collezione.count()
-
-    def ottieni_nome_collezione(self) -> str:
-        """Restituisce il nome della collezione vettoriale sottostante."""
-        return self._nome
