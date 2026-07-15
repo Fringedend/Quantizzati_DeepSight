@@ -148,9 +148,15 @@ the two in sync when the install flow itself changes. FFmpeg comes from `imageio
 `models.py`/`processor.py` prepend its bin dir to `PATH` and feed Whisper a manually
 decoded WAV array to avoid a Windows `ffmpeg.exe` lookup.
 
-**Qwen's model files are not installed by either script — copy them in by hand.**
-`models/qwen/` must contain `llama-server`(`.exe` on Windows, plus its DLLs),
-`Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf`, and `mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf`
-(paths in `config.PERCORSO_LLAMA_SERVER`/`PERCORSO_MODELLO_QWEN`/`PERCORSO_MMPROJ_QWEN`).
-Since Qwen loads lazily, a missing file doesn't surface at app startup — it raises
-`FileNotFoundError` the first time anything needs an embedding (upload, search, tags).
+**Qwen's model files are auto-downloaded by the install scripts (~2.1 GB), not
+committed** (GitHub rejects files >100 MB). Both installers end with an idempotent
+download step: the two GGUFs from `DevQuasar/Qwen.Qwen3-VL-Embedding-2B-GGUF` on
+Hugging Face, and `llama-server` (CPU build, plus DLLs/libs) from the pinned llama.cpp
+release `b10016`. `models/qwen/` must end up containing `llama-server`(`.exe` on
+Windows), `Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf`, and
+`mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf` (paths in
+`config.PERCORSO_LLAMA_SERVER`/`PERCORSO_MODELLO_QWEN`/`PERCORSO_MMPROJ_QWEN`).
+Since Qwen loads lazily, a missing file doesn't surface at app startup — the embedding
+stage fails per item (`stato_embedding = -1`); after installing the models, the queue
+panel's "🔁 Riprova falliti" button re-queues them (it renders even when the queue is
+otherwise empty — that empty-queue case is exactly the missing-models scenario).

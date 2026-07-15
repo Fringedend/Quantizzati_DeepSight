@@ -23,13 +23,13 @@ Gli script di installazione e avvio sono divisi per sistema operativo dentro
 > invece di eseguirsi: sono involucri che richiamano `install.ps1` / `run.ps1`
 > nella stessa cartella.
 
-> **Modelli Qwen (obbligatori, non scaricati dall'installatore)**: la cartella
-> `models/qwen/` deve contenere a parte l'eseguibile `llama-server` (con le sue DLL),
-> il modello `Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf` e la proiezione multimodale
-> `mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf`. Senza questi file l'app si avvia
-> comunque, ma la prima ricerca testuale/per immagine, il primo caricamento o il
-> calcolo dei tag automatici (tutto ciò che usa Qwen) falliscono con un errore
-> esplicito — i volti (FaceNet) e il parlato (Whisper) non ne hanno bisogno.
+> **Modelli Qwen (scaricati automaticamente dall'installatore, ~2,1 GB)**: al termine
+> l'installatore scarica in `models/qwen/` i due file GGUF (da Hugging Face) e
+> l'eseguibile `llama-server` con le sue DLL (dalla release ufficiale di llama.cpp).
+> Se il download fallisce (o è stato saltato), l'app si avvia comunque: gli embedding
+> degli elementi caricati vengono segnati come falliti e, una volta rieseguito
+> l'installatore, si recuperano con il pulsante **🔁 Riprova falliti** nel pannello
+> coda — i volti (FaceNet) e il parlato (Whisper) non hanno bisogno di Qwen.
 
 ### Linux / macOS
 

@@ -192,18 +192,77 @@ Write-Host "Per avviare l'applicazione puoi ora utilizzare:" -ForegroundColor Ye
 Write-Host " - Il file eseguibile: doppio clic su scripts\windows\run.bat" -ForegroundColor Yellow
 Write-Host "==========================================================" -ForegroundColor Green
 
-# 7. Verifica non bloccante: i file del modello Qwen3-VL-Embedding-2B non sono
-#    scaricabili da questo script (troppo pesanti); se mancano l'app si avvia
-#    comunque, ma la ricerca semantica/tag/OCR-via-embedding fallira' al primo uso.
+# 7. Download automatico dei modelli Qwen (~2.1 GB da Hugging Face) e di
+#    llama-server (release ufficiale llama.cpp, build CPU). Idempotente: i file
+#    gia' presenti non vengono riscaricati. Non bloccante: se il download
+#    fallisce l'app parte comunque e la coda segnera' gli embedding come
+#    falliti, recuperabili con "Riprova falliti" dopo aver rieseguito lo script.
+Write-Host "`n[Extra] Download modelli Qwen + llama-server (se mancanti)..." -ForegroundColor Cyan
 $dirQwen = Join-Path (Get-Location) "models\qwen"
-$fileRichiesti = @("llama-server.exe",
-                    "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf",
-                    "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf")
-$fileMancanti = $fileRichiesti | Where-Object { -not (Test-Path (Join-Path $dirQwen $_)) }
-if ($fileMancanti) {
-    Write-Host "`nATTENZIONE: mancano i file del modello Qwen in models\qwen\:" -ForegroundColor Yellow
-    $fileMancanti | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
-    Write-Host "Copiali in models\qwen\ prima di usare la ricerca semantica (vedi README)." -ForegroundColor Yellow
+New-Item -ItemType Directory -Force -Path $dirQwen | Out-Null
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest e' lentissimo con la barra attiva
+
+# Scarica su file .part e rinomina a fine download: un download interrotto non
+# lascia mai un file parziale col nome definitivo (che verrebbe saltato al retry).
+function Get-FileSePossibile {
+    param([string]$url, [string]$dest)
+    if (Test-Path $dest) { Write-Host "  gia' presente: $(Split-Path -Leaf $dest)" -ForegroundColor Green; return $true }
+    Write-Host "  download: $(Split-Path -Leaf $dest)" -ForegroundColor Cyan
+    try {
+        # curl.exe (incluso in Windows 10+) e' molto piu' veloce e riprende i download interrotti
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            curl.exe -L --fail --retry 3 -C - -o "$dest.part" $url
+            if ($LASTEXITCODE -ne 0) { throw "curl exit $LASTEXITCODE" }
+        } else {
+            Invoke-WebRequest -Uri $url -OutFile "$dest.part" -UseBasicParsing
+        }
+        Move-Item -Force "$dest.part" $dest
+        return $true
+    } catch {
+        Write-Host "  FALLITO: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+$urlHf = "https://huggingface.co/DevQuasar/Qwen.Qwen3-VL-Embedding-2B-GGUF/resolve/main"
+$okModelli = $true
+foreach ($nome in @("Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf", "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf")) {
+    if (-not (Get-FileSePossibile "$urlHf/$nome" (Join-Path $dirQwen $nome))) { $okModelli = $false }
+}
+
+# llama-server: release pinnata di llama.cpp (build CPU: l'app lo lancia con -ngl 0).
+# ponytail: versione fissa b10016, da alzare a mano se una futura quantizzazione la richiede.
+$okServer = $true
+if (-not (Test-Path (Join-Path $dirQwen "llama-server.exe"))) {
+    $tagLlama = "b10016"
+    $zipLlama = Join-Path $env:TEMP "llama-$tagLlama-bin-win-cpu-x64.zip"
+    $urlLlama = "https://github.com/ggml-org/llama.cpp/releases/download/$tagLlama/llama-$tagLlama-bin-win-cpu-x64.zip"
+    if (Get-FileSePossibile $urlLlama $zipLlama) {
+        $dirEstrazione = Join-Path $env:TEMP "llama-estratto"
+        if (Test-Path $dirEstrazione) { Remove-Item -Recurse -Force $dirEstrazione }
+        Expand-Archive -Path $zipLlama -DestinationPath $dirEstrazione -Force
+        # Il layout interno dello zip e' cambiato tra le release: si cerca l'exe
+        # ovunque e si copiano exe + DLL dalla sua stessa cartella.
+        $exe = Get-ChildItem -Path $dirEstrazione -Recurse -Filter "llama-server.exe" | Select-Object -First 1
+        if ($exe) {
+            Get-ChildItem -Path $exe.DirectoryName -Include "*.exe","*.dll" -Recurse |
+                Copy-Item -Destination $dirQwen -Force
+            Write-Host "  llama-server.exe installato in models\qwen\" -ForegroundColor Green
+        } else {
+            Write-Host "  FALLITO: llama-server.exe non trovato nello zip." -ForegroundColor Red
+            $okServer = $false
+        }
+        Remove-Item -Recurse -Force $dirEstrazione -ErrorAction SilentlyContinue
+        Remove-Item -Force $zipLlama -ErrorAction SilentlyContinue
+    } else { $okServer = $false }
+} else {
+    Write-Host "  gia' presente: llama-server.exe" -ForegroundColor Green
+}
+
+if (-not ($okModelli -and $okServer)) {
+    Write-Host "`nATTENZIONE: download dei modelli incompleto. Riesegui questo script con" -ForegroundColor Yellow
+    Write-Host "una connessione attiva, oppure copia i file a mano in models\qwen\ (vedi README)." -ForegroundColor Yellow
 }
 
 Pause

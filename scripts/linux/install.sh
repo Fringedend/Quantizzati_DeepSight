@@ -107,16 +107,62 @@ echo -e "${VERDE}==========================================================${RES
 echo -e "${GIALLO}Per avviare l'applicazione: ./scripts/linux/run.sh${RESET}"
 echo -e "${VERDE}==========================================================${RESET}"
 
-# 8. Verifica non bloccante: i file del modello Qwen3-VL-Embedding-2B non sono
-#    scaricabili da questo script (troppo pesanti); se mancano l'app si avvia
-#    comunque, ma la ricerca semantica/tag/OCR-via-embedding fallira' al primo uso.
+# 8. Download automatico dei modelli Qwen (~2.1 GB da Hugging Face) e di
+#    llama-server (release ufficiale llama.cpp, build CPU). Idempotente: i file
+#    gia' presenti non vengono riscaricati. Non bloccante (set +e locale): se il
+#    download fallisce l'app parte comunque e la coda segnera' gli embedding
+#    come falliti, recuperabili con "Riprova falliti" dopo aver rieseguito lo script.
+echo -e "\n${CIANO}[Extra] Download modelli Qwen + llama-server (se mancanti)...${RESET}"
 dir_qwen="models/qwen"
-file_mancanti=()
-for f in llama-server "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf"; do
-    [ -f "$dir_qwen/$f" ] || file_mancanti+=("$f")
-done
-if [ "${#file_mancanti[@]}" -gt 0 ]; then
-    echo -e "\n${GIALLO}ATTENZIONE: mancano i file del modello Qwen in $dir_qwen/:${RESET}"
-    for f in "${file_mancanti[@]}"; do echo -e "${GIALLO}  - $f${RESET}"; done
-    echo -e "${GIALLO}Copiali in $dir_qwen/ prima di usare la ricerca semantica (vedi README).${RESET}"
+mkdir -p "$dir_qwen"
+set +e
+
+# Scarica su file .part e rinomina a fine download: un download interrotto non
+# lascia mai un file parziale col nome definitivo (che verrebbe saltato al retry).
+scarica() { # $1=url $2=destinazione
+    if [ -f "$2" ]; then echo -e "${VERDE}  gia' presente: $(basename "$2")${RESET}"; return 0; fi
+    echo -e "${CIANO}  download: $(basename "$2")${RESET}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -L --fail --retry 3 -C - -o "$2.part" "$1"
+    else
+        wget -c -O "$2.part" "$1"
+    fi
+    if [ $? -ne 0 ]; then echo -e "${ROSSO}  FALLITO: $(basename "$2")${RESET}"; return 1; fi
+    mv -f "$2.part" "$2"
+}
+
+url_hf="https://huggingface.co/DevQuasar/Qwen.Qwen3-VL-Embedding-2B-GGUF/resolve/main"
+ok=0
+scarica "$url_hf/Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" "$dir_qwen/Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" || ok=1
+scarica "$url_hf/mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf" "$dir_qwen/mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf" || ok=1
+
+# llama-server: release pinnata di llama.cpp (build CPU: l'app lo lancia con -ngl 0).
+# ponytail: versione fissa b10016, da alzare a mano se una futura quantizzazione la richiede.
+if [ ! -f "$dir_qwen/llama-server" ]; then
+    tag_llama="b10016"
+    tar_llama="/tmp/llama-$tag_llama-bin-ubuntu-x64.tar.gz"
+    if scarica "https://github.com/ggml-org/llama.cpp/releases/download/$tag_llama/llama-$tag_llama-bin-ubuntu-x64.tar.gz" "$tar_llama"; then
+        dir_estrazione="/tmp/llama-estratto"
+        rm -rf "$dir_estrazione"; mkdir -p "$dir_estrazione"
+        tar -xzf "$tar_llama" -C "$dir_estrazione"
+        # Il layout interno dell'archivio e' cambiato tra le release: si cerca il
+        # binario ovunque e si copiano eseguibile + librerie dalla sua cartella.
+        exe=$(find "$dir_estrazione" -name llama-server -type f | head -n 1)
+        if [ -n "$exe" ]; then
+            cp "$(dirname "$exe")"/* "$dir_qwen/" 2>/dev/null
+            chmod +x "$dir_qwen/llama-server"
+            echo -e "${VERDE}  llama-server installato in $dir_qwen/${RESET}"
+        else
+            echo -e "${ROSSO}  FALLITO: llama-server non trovato nell'archivio.${RESET}"; ok=1
+        fi
+        rm -rf "$dir_estrazione" "$tar_llama"
+    else ok=1; fi
+else
+    echo -e "${VERDE}  gia' presente: llama-server${RESET}"
+fi
+set -e
+
+if [ "$ok" -ne 0 ]; then
+    echo -e "\n${GIALLO}ATTENZIONE: download dei modelli incompleto. Riesegui questo script con${RESET}"
+    echo -e "${GIALLO}una connessione attiva, oppure copia i file a mano in $dir_qwen/ (vedi README).${RESET}"
 fi

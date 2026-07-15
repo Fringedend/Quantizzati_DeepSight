@@ -709,8 +709,14 @@ def deduplica_risultati(risultati_ricerca):
 def pannello_coda():
     stato = processor.stato_coda()
     if stato["rimanenti"] == 0 and not stato["in_corso"]:
+        # Anche a coda vuota il pulsante di retry deve esserci: se TUTTI gli stadi
+        # falliscono (es. modelli Qwen mancanti al primo avvio) la coda si svuota
+        # e senza questo pulsante i falliti resterebbero irrecuperabili dalla UI.
         if stato["falliti"]:
             st.warning(f"⚠️ {stato['falliti']} elementi con elaborazioni fallite")
+            if st.button(f"🔁 Riprova falliti ({stato['falliti']})", key="coda_riprova_vuota", width='stretch'):
+                processor.riprova_falliti()
+                st.rerun(scope="fragment")
         return
     riga = f"⚙️ **Coda elaborazione:** {stato['rimanenti']} file"
     if stato["in_corso"]:
