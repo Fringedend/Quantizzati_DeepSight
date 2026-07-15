@@ -5,7 +5,7 @@ import numpy as np
 import config
 config.PERCORSO_DB = os.path.join(tempfile.mkdtemp(), "test.db")
 import database
-database._store_frame = None  # non toccare l'indice Chroma reale (vedi test_database_v07)
+database._store_frame = None  # non toccare l'indice Chroma reale (vedi test_database)
 database._store_volti = None
 import persone
 

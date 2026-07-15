@@ -70,7 +70,7 @@ Tutto il codice sorgente Python vive nella cartella **`src/`**:
 | `src/chroma_store.py`  | Archivio vettoriale (ChromaDB) per la ricerca per similarità. |
 | `src/calibra_soglie.py`| Script manuale: misura le distribuzioni reali dei coseni Qwen sull'archivio per tarare le soglie in `config.py`. |
 | `src/test_models.py`   | Script diagnostico: verifica che i modelli AI (Qwen, FaceNet, Whisper) si carichino correttamente. |
-| `src/test_qwen_client.py`, `src/test_database_v07.py`, `src/test_persone.py`, `src/test_ricerca_vettoriale.py` | Altri auto-test (`assert`-based, si eseguono direttamente). |
+| `src/test_qwen_client.py`, `src/test_database.py`, `src/test_persone.py`, `src/test_ricerca_vettoriale.py` | Altri auto-test (`assert`-based, si eseguono direttamente). |
 | `requirements.txt`     | Dipendenze Python di base. |
 | `scripts/windows/`     | Installazione e avvio su Windows: `install.bat` / `run.bat` (involucri) e la logica PowerShell `install.ps1` / `run.ps1`. |
 | `scripts/linux/`       | Installazione e avvio su Linux/macOS: `install.sh` / `run.sh`. |

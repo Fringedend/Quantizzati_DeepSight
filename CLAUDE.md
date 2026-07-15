@@ -28,7 +28,7 @@ Launcher scripts live under `scripts/`, split per OS: `scripts/windows/` and
 .\venv\Scripts\python.exe src\test_qwen_client.py
 
 # Staged-queue + persons schema (temp DB, Chroma handles stubbed out — no real writes)
-.\venv\Scripts\python.exe src\test_database_v07.py
+.\venv\Scripts\python.exe src\test_database.py
 
 # Face clustering: greedy centroid assignment + DBSCAN re-cluster
 .\venv\Scripts\python.exe src\test_persone.py
@@ -53,7 +53,7 @@ Python (distros differ too much — apt/dnf/pacman) and detects the GPU via
 ./scripts/linux/run.sh
 venv/bin/python src/test_ricerca_vettoriale.py
 venv/bin/python src/test_qwen_client.py
-venv/bin/python src/test_database_v07.py
+venv/bin/python src/test_database.py
 venv/bin/python src/test_persone.py
 venv/bin/python src/test_models.py
 ```

@@ -53,7 +53,7 @@ def esegui_test():
     assert persone[0]["name"] == "Mario" and persone[0]["n_volti"] == 1
     media_p = database.ottieni_media_di_persona(id_p)
     assert len(media_p) == 1 and media_p[0]["id"] == id_media
-    print("test_database_v07: OK")
+    print("test_database: OK")
 
 if __name__ == "__main__":
     esegui_test()
