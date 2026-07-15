@@ -245,6 +245,11 @@ def conteggio_coda():
         "trascrizione": _conta("SELECT COUNT(*) FROM media_items WHERE processed = 1 AND stato_trascrizione = 0"),
         "falliti": _conta("SELECT COUNT(*) FROM media_items WHERE processed = -1 "
                           "OR stato_embedding = -1 OR stato_volti = -1 OR stato_trascrizione = -1"),
+        # File distinti ancora in coda (un file con 3 stadi pendenti conta 1, non 3):
+        # e' il numero che la UI mostra come "rimanenti".
+        "file_in_coda": _conta("SELECT COUNT(*) FROM media_items WHERE processed = 0 "
+                               "OR (processed = 1 AND (stato_embedding = 0 OR stato_volti = 0 "
+                               "OR stato_trascrizione = 0))"),
     }
     connessione.close()
     return conteggi
@@ -648,28 +653,6 @@ def carica_tutti_embedding_clip():
     righe = cursore.fetchall()
     connessione.close()
     return [d for d in (_riga_frame_a_dict(r) for r in righe) if d is not None]
-
-def soglia_adattiva_testo(query_emb, fattore=None):
-    """Soglia coseno per una query testuale: media + fattore*sigma sull'intero archivio.
-
-    Vedi config.FATTORE_SIGMA_RICERCA_TESTO per il perché di una soglia adattiva invece di
-    una costante. Le statistiche vanno calcolate su TUTTI i frame, non sui candidati di
-    Chroma: quelli sono già i migliori, quindi darebbero una media gonfiata e una soglia
-    troppo severa. È un prodotto scalare su una matrice (N, 512): trascurabile per un
-    archivio personale.
-
-    Con pochissimi frame sigma è inaffidabile: si restituisce -1.0 (nessun filtro, i
-    risultati restano comunque ordinati per similarità).
-    """
-    if fattore is None:
-        fattore = config.FATTORE_SIGMA_RICERCA_TESTO
-
-    embedding = [d["embedding"] for d in carica_tutti_embedding_clip()]
-    if len(embedding) < 10:
-        return -1.0
-
-    similarita = np.stack(embedding) @ query_emb
-    return float(similarita.mean() + fattore * similarita.std())
 
 def cerca_frame_simili(query_emb, k=100):
     """Ricerca per similarità sui frame: Chroma restituisce i candidati, il coseno

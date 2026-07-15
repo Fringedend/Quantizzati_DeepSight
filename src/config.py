@@ -33,7 +33,9 @@ PERCORSO_MODELLO_QWEN = os.path.join(DIR_MODELLI, "Qwen.Qwen3-VL-Embedding-2B.Q5
 PERCORSO_MMPROJ_QWEN = os.path.join(DIR_MODELLI, "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf")
 QWEN_HOST = "127.0.0.1"
 QWEN_PORT = 8091
-QWEN_THREADS = 0          # 0 = lascia decidere a llama-server
+# Un core resta libero per la UI: llama-server a piena CPU congela gli
+# aggiornamenti del pannello coda di Streamlit durante gli embedding.
+QWEN_THREADS = max(1, (os.cpu_count() or 2) - 1)
 DIM_EMBEDDING_QWEN = 2048  # 2B = 2048-d; NON mescolare con modelli di dimensione diversa
 # Istruzione di retrieval per le QUERY testuali (i documenti/immagini NON ricevono istruzione)
 ISTRUZIONE_RICERCA = "Retrieve images or text relevant to the user's query."
@@ -65,11 +67,9 @@ DIMENSIONE_MINIMA_VOLTO = 40  # Dimensione minima del volto in pixel (volti trop
 # della dimensione: alzarla oltre ~0.92 inizia a scartare anche ritratti veri.
 SOGLIA_CONFIDENZA_RILEVAMENTO_VOLTO = 0.90
 
-# ATTENZIONE (v0.7): le soglie sotto erano tarate sui coseni di CLIP. Qwen3-VL vive su
-# una scala diversa: vanno RIMISURATE su dati reali con src/calibra_soglie.py.
-FATTORE_SIGMA_RICERCA_TESTO = 2.5
-# Immagine->immagine con Qwen: valore iniziale prudente, da ricalibrare.
-SOGLIA_SIMILARITA_IMMAGINE = 0.50
+# Nota (v0.7): le ricerche Qwen (testo->immagine e immagine->immagine) NON hanno soglia:
+# i risultati sono sempre ordinati per rilevanza e la UI mostra i migliori 5 + "Mostra altri".
+# Le vecchie soglie CLIP (adattiva testo, SOGLIA_SIMILARITA_IMMAGINE) sono state rimosse.
 
 # Impostazioni per la classificazione dei tag (basata sulla probabilità softmax)
 # Probabilità softmax minima affinché una categoria venga assegnata come tag.

@@ -704,15 +704,15 @@ def deduplica_risultati(risultati_ricerca):
 
 # (I filtri di ricerca sono stati spostati nella pagina "Ricerca Avanzata".)
 
-# Pannello coda: si auto-aggiorna ogni 2 secondi ed e' visibile da ogni pagina.
-@st.fragment(run_every=2.0)
+# Pannello coda: si auto-aggiorna ogni secondo ed e' visibile da ogni pagina.
+@st.fragment(run_every=1.0)
 def pannello_coda():
     stato = processor.stato_coda()
     if stato["rimanenti"] == 0 and not stato["in_corso"]:
         if stato["falliti"]:
             st.warning(f"⚠️ {stato['falliti']} elementi con elaborazioni fallite")
         return
-    riga = f"⚙️ **Coda elaborazione:** {stato['rimanenti']} elementi"
+    riga = f"⚙️ **Coda elaborazione:** {stato['rimanenti']} file"
     if stato["in_corso"]:
         riga += f"\n\n`{stato['in_corso']}`"
     if stato["eta_secondi"]:
@@ -1231,15 +1231,14 @@ elif menu == "🔍 Ricerca Avanzata":
                 try:
                     qwen = gestore.ottieni_qwen()
                     query_emb = qwen.ottieni_embedding_testo(testo_query)
-                    soglia = database.soglia_adattiva_testo(query_emb)
                     emb_negativo = None
                     if usa_negativo and testo_negativo.strip():
                         emb_negativo = qwen.ottieni_embedding_testo(testo_negativo.strip())
 
+                    # Nessuna soglia: si mostrano sempre i migliori per rilevanza
+                    # (top-5 + "Mostra altri"), cosi' una query non resta mai a vuoto.
                     for f, sim in database.cerca_frame_simili(query_emb):
                         if not applica_filtri(f, filtri):
-                            continue
-                        if sim < soglia:
                             continue
                         punteggio = sim
                         if emb_negativo is not None:
@@ -1249,7 +1248,6 @@ elif menu == "🔍 Ricerca Avanzata":
                         risultati.append((f, punteggio, "clip"))
 
                     risultati = deduplica_risultati(risultati)
-                    risultati = risultati[:30]
                 except Exception as errore:
                     st.error(f"Errore nella ricerca semantica: {errore}")
 
@@ -1278,16 +1276,14 @@ elif menu == "🔍 Ricerca Avanzata":
             if st.session_state.get("emb_query_img") is not None and st.session_state.get("id_file_img") == id_file_img:
                 with st.spinner("Ricerca vettoriale su ChromaDB..."):
                     try:
+                        # Anche qui niente soglia (vedi ricerca testuale): ordina per
+                        # similarita' e lascia al top-5 + "Mostra altri" il taglio.
                         for f, sim in database.cerca_frame_simili(st.session_state["emb_query_img"]):
                             if not applica_filtri(f, filtri):
                                 continue
-                            # Soglia dedicata: i coseni immagine-immagine sono molto più alti
-                            # di quelli testo-immagine (vedi config).
-                            if sim >= config.SOGLIA_SIMILARITA_IMMAGINE:
-                                risultati.append((f, sim, "clip"))
+                            risultati.append((f, sim, "clip"))
 
                         risultati = deduplica_risultati(risultati)
-                        risultati = risultati[:30]
                     except Exception as errore:
                         st.error(f"Errore nella ricerca per similarità d'immagine: {errore}")
                         
@@ -1396,13 +1392,22 @@ elif menu == "🔍 Ricerca Avanzata":
 
     # --- MOSTRA RISULTATI DELLA RICERCA ---
     if risultati:
-        st.markdown(f"### Risultati della Ricerca ({len(risultati)} trovati)")
+        # Si mostrano solo i migliori N per rilevanza; "Mostra altri" allarga la finestra.
+        # Il contatore riparte da 5 quando cambiano i criteri di ricerca (firma).
+        firma_ricerca = (testo_query, testo_negativo,
+                         st.session_state.get("id_file_img"),
+                         st.session_state.get("id_file_volto"), parola_chiave)
+        if st.session_state.get("firma_ricerca") != firma_ricerca:
+            st.session_state["firma_ricerca"] = firma_ricerca
+            st.session_state["n_risultati_mostrati"] = 5
+        n_mostrati = min(st.session_state.get("n_risultati_mostrati", 5), len(risultati))
+        st.markdown(f"### Risultati della Ricerca (i migliori {n_mostrati} di {len(risultati)})")
 
         # Container con key: il CSS lo trasforma in una griglia responsive e ritaglia le foto
         # in quadrati uniformi. Un container per elemento = una cella della griglia.
         griglia_risultati = st.container(key="risultati_griglia")
 
-        for idx, corrispondenza in enumerate(risultati):
+        for idx, corrispondenza in enumerate(risultati[:n_mostrati]):
             elemento, punteggio, modalita = corrispondenza
 
             with griglia_risultati.container():
@@ -1493,6 +1498,12 @@ elif menu == "🔍 Ricerca Avanzata":
                         database.elimina_elemento_multimediale(elemento["media_id"])
                         st.success("File eliminato dall'archivio con successo!")
                         st.rerun()
+
+        if len(risultati) > n_mostrati:
+            if st.button(f"➕ Mostra altri ({len(risultati) - n_mostrati} rimanenti)",
+                         key="btn_mostra_altri", width='stretch'):
+                st.session_state["n_risultati_mostrati"] = n_mostrati + 10
+                st.rerun()
     else:
         if any([testo_query, file_immagine_query, file_volto_query, parola_chiave]):
             st.warning("Nessun risultato trovato corrispondente ai criteri di ricerca ed ai filtri inseriti.")

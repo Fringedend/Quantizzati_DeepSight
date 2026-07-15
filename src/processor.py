@@ -474,17 +474,19 @@ def riprendi():
 def stato_coda():
     """Fotografia per la UI: conteggi, elemento in corso, pausa, ETA stimato."""
     conteggi = database.conteggio_coda()
-    rimanenti = conteggi["da_preparare"] + conteggi["embedding"] + conteggi["volti"] + conteggi["trascrizione"]
+    # File distinti, non somma degli stadi: 10 foto = "10 rimanenti", non 30.
+    rimanenti = conteggi["file_in_coda"]
     durate = _stato_runtime["durate"]
-    # ETA approssimativa per-iterazione: sovrastima con più stadi pendenti (un elemento potrebbe passare più stadi)
+    # ETA approssimativa: media delle ultime iterazioni x file rimanenti (un file
+    # appena registrato passa 2 iterazioni: preparazione + stadi AI, quindi sottostima un po')
     eta = (sum(durate) / len(durate)) * rimanenti if durate and rimanenti else None
     return {**conteggi, "rimanenti": rimanenti, "in_corso": _stato_runtime["in_corso"],
             "in_pausa": database.leggi_impostazione("coda_in_pausa", "0") == "1",
             "eta_secondi": eta}
 
-_STADI = (("stato_embedding", _stadio_embedding),
-          ("stato_volti", _stadio_volti),
-          ("stato_trascrizione", _stadio_trascrizione))
+_STADI = (("stato_embedding", "embedding", _stadio_embedding),
+          ("stato_volti", "volti", _stadio_volti),
+          ("stato_trascrizione", "trascrizione", _stadio_trascrizione))
 
 def _ciclo_lavoratore():
     import time
@@ -499,17 +501,18 @@ def _ciclo_lavoratore():
             _sveglia.wait(timeout=2.0)
             continue
 
-        _stato_runtime["in_corso"] = elemento["filename"]
         inizio = time.monotonic()
         try:
             if elemento["processed"] == 0:
+                _stato_runtime["in_corso"] = f"{elemento['filename']} · preparazione"
                 _prepara_media(elemento)
             else:
-                for colonna, stadio in _STADI:
+                for colonna, etichetta, stadio in _STADI:
                     if elemento[colonna] != 0:
                         continue
                     if database.leggi_impostazione("coda_in_pausa", "0") == "1":
                         break  # pausa tra gli stadi: l'elemento restera' in coda
+                    _stato_runtime["in_corso"] = f"{elemento['filename']} · {etichetta}"
                     try:
                         stadio(elemento)
                         database.imposta_stato_stadio(elemento["id"], colonna, 1)

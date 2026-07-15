@@ -37,7 +37,7 @@ Launcher scripts live under `scripts/`, split per OS: `scripts/windows/` and
 .\venv\Scripts\python.exe src\test_models.py
 
 # Manual (not a test): measure real Qwen cosine distributions on your own archive to
-# (re)tune config.py's SOGLIA_SIMILARITA_IMMAGINE / FATTORE_SIGMA_RICERCA_TESTO / SCALA_LOGIT_TAG
+# (re)tune config.py's SCALA_LOGIT_TAG and inspect search-score distributions
 .\venv\Scripts\python.exe src\calibra_soglie.py "una query di prova"
 ```
 
@@ -73,18 +73,17 @@ distance score is deliberately ignored — it defaults to L2, and the app's thre
 (`config.SOGLIA_SIMILARITA_*`) are cosine. If `_store_frame`/`_store_volti` is `None`
 (Chroma failed to load), both functions fall back to a full linear scan.
 
-**Text→image and image→image search share one embedding model but not one threshold —
-plus an optional negative-prompt penalty.** Both use Qwen3-VL-Embedding-2B
-(`models.GestoreQwen`), but the two cosine distributions sit on different, query-dependent
-scales, so there is no single usable constant for text search: `database.soglia_adattiva_testo`
-recomputes the cutoff per query as `media + FATTORE_SIGMA_RICERCA_TESTO * sigma` over **all**
-frame embeddings (not the Chroma candidates — those are the top ones, so their mean is
-inflated). Image→image search uses the fixed `config.SOGLIA_SIMILARITA_IMMAGINE`; faces use
-`SOGLIA_SIMILARITA_VOLTI`. **These constants (and `SCALA_LOGIT_TAG` for zero-shot tags) were
-carried over from CLIP and are placeholder values for Qwen** — see the "ATTENZIONE (v0.7)"
-comment in `config.py`; recalibrate on real archive data with `src/calibra_soglie.py`. The
-text-search tab also supports an optional negative prompt (`app.py`, "Ricerca Avanzata" →
-Semantica): the UI embeds a second "must not contain" phrase and the final score becomes
+**Qwen searches have NO similarity threshold — only faces do.** Text→image and
+image→image search both use Qwen3-VL-Embedding-2B (`models.GestoreQwen`), whose cosine
+distributions sit on different, query-dependent scales — every fixed or adaptive cutoff
+tried in practice either hid everything or nothing. So the UI (`app.py`, "Ricerca
+Avanzata") never filters by score: results are sorted by relevance and paginated —
+top 5, then a "Mostra altri" button (+10 per click; the counter resets via a signature
+of the search inputs in `st.session_state["firma_ricerca"]`). Only face search keeps a
+threshold (`SOGLIA_SIMILARITA_VOLTI` — FaceNet, empirically calibrated). `SCALA_LOGIT_TAG`
+for zero-shot tags is still a CLIP-era placeholder; measure with `src/calibra_soglie.py`.
+The text-search tab also supports an optional negative prompt: the UI embeds a second
+"must not contain" phrase and the final score becomes
 `cos(query, frame) - config.LAMBDA_PROMPT_NEGATIVO * cos(negative, frame)`.
 
 **Two separate Chroma collections (`qwen_frames`, `faces`) are mandatory, not cosmetic.**
