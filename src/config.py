@@ -79,8 +79,3 @@ SOGLIA_CONFIDENZA_RILEVAMENTO_VOLTO = 0.90
 # Probabilità softmax minima affinché una categoria venga assegnata come tag.
 SOGLIA_PROBABILITA_TAG = 0.05  # Soglia minima del 5%
 MASSIMO_TAG_PER_IMMAGINE = 10  # Numero massimo di tag assegnati per immagine/frame
-
-def ottieni_archivio_vettoriale(nome_collezione="media_vectors"):
-    """Restituisce un'istanza di ChromaStore per la collezione vettoriale indicata."""
-    from chroma_store import ChromaStore
-    return ChromaStore(nome_collezione=nome_collezione)

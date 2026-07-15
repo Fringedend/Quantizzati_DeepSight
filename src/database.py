@@ -3,15 +3,17 @@ import numpy as np
 import os
 import json
 import config
-from config import ottieni_archivio_vettoriale
 
 # Inizializza i due archivi vettoriali (ChromaDB): collezioni separate perche' gli
 # id dei frame e dei volti sono sequenze AUTOINCREMENT distinte e colliderebbero.
 _store_frame = None
 _store_volti = None
 try:
-    _store_frame = ottieni_archivio_vettoriale("qwen_frames")
-    _store_volti = ottieni_archivio_vettoriale("faces")
+    # Import dentro il try: se chromadb non importa (es. sqlite3 di sistema troppo
+    # vecchio), gli store restano None e la ricerca degrada alla scansione lineare.
+    from chroma_store import ChromaStore
+    _store_frame = ChromaStore(nome_collezione="qwen_frames")
+    _store_volti = ChromaStore(nome_collezione="faces")
 except Exception as errore:
     print(f"Errore durante l'inizializzazione degli archivi vettoriali: {errore}")
 

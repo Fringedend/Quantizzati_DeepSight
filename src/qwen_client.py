@@ -175,10 +175,9 @@ class LlamaServer:
                 with urllib.request.urlopen(url, timeout=5) as r:
                     if r.status == 200:
                         body = json.loads(r.read() or b"{}")
-                        if body.get("status", "ok") in ("ok", "loading model") and \
-                                body.get("status") != "loading model":
-                            return
-                        if body.get("status") == "ok":
+                        # Pronto quando non sta piu' caricando il modello (su HTTP 200
+                        # lo status reale e' "ok" o "loading model").
+                        if body.get("status", "ok") != "loading model":
                             return
             except Exception as e:  # noqa: BLE001
                 last_err = e
