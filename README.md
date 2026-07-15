@@ -26,6 +26,9 @@ Gli script di installazione e avvio sono divisi per sistema operativo dentro
 > **Modelli Qwen (scaricati automaticamente dall'installatore, ~2,1 GB)**: al termine
 > l'installatore scarica in `models/qwen/` i due file GGUF (da Hugging Face) e
 > l'eseguibile `llama-server` con le sue DLL (dalla release ufficiale di llama.cpp).
+> Ogni GGUF viene verificato con SHA-256: un file corrotto non fa fallire llama-server
+> ma produce embedding non validi (ricerca rotta senza errori visibili), quindi in caso
+> di hash errato viene eliminato e basta rilanciare l'installatore per riscaricarlo.
 > Se il download fallisce (o è stato saltato), l'app si avvia comunque: gli embedding
 > degli elementi caricati vengono segnati come falliti e, una volta rieseguito
 > l'installatore, si recuperano con il pulsante **🔁 Riprova falliti** nel pannello

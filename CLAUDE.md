@@ -152,7 +152,12 @@ decoded WAV array to avoid a Windows `ffmpeg.exe` lookup.
 committed** (GitHub rejects files >100 MB). Both installers end with an idempotent
 download step: the two GGUFs from `DevQuasar/Qwen.Qwen3-VL-Embedding-2B-GGUF` on
 Hugging Face, and `llama-server` (CPU build, plus DLLs/libs) from the pinned llama.cpp
-release `b10016`. `models/qwen/` must end up containing `llama-server`(`.exe` on
+release `b10016`. Each GGUF is SHA-256-verified against the pinned hashes in the
+scripts — a corrupted GGUF does NOT crash llama-server, it silently yields NaN
+embeddings (happened in practice); on mismatch the file is deleted and re-running the
+installer re-downloads it. On Windows the `.part`→final rename retries up to 5 times:
+Defender locks big just-written files for a few seconds ("file in uso da un altro
+processo"). `models/qwen/` must end up containing `llama-server`(`.exe` on
 Windows), `Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf`, and
 `mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf` (paths in
 `config.PERCORSO_LLAMA_SERVER`/`PERCORSO_MODELLO_QWEN`/`PERCORSO_MMPROJ_QWEN`).

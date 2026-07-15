@@ -217,7 +217,18 @@ function Get-FileSePossibile {
         } else {
             Invoke-WebRequest -Uri $url -OutFile "$dest.part" -UseBasicParsing
         }
-        Move-Item -Force "$dest.part" $dest
+        # La rinomina puo' fallire con "file in uso da un altro processo": Windows
+        # Defender scansiona i file grandi appena scritti e li blocca per qualche
+        # secondo. Si riprova fino a 5 volte prima di arrendersi.
+        foreach ($tentativo in 1..5) {
+            try {
+                Move-Item -Force "$dest.part" $dest -ErrorAction Stop
+                break
+            } catch {
+                if ($tentativo -eq 5) { throw }
+                Start-Sleep -Seconds 3
+            }
+        }
         return $true
     } catch {
         Write-Host "  FALLITO: $($_.Exception.Message)" -ForegroundColor Red
@@ -226,9 +237,26 @@ function Get-FileSePossibile {
 }
 
 $urlHf = "https://huggingface.co/DevQuasar/Qwen.Qwen3-VL-Embedding-2B-GGUF/resolve/main"
+
+# SHA-256 ufficiali (metadati LFS del repo Hugging Face). La verifica e'
+# obbligatoria: un GGUF corrotto NON fa fallire llama-server, produce embedding
+# NaN silenziosi (successo davvero: ricerca rotta senza alcun errore visibile).
+$shaAttesi = @{
+    "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf"     = "3f2f9023f15d5f3f084034eb5f14cc04a8e8d89b1f262354db9cf63c50308206"
+    "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf" = "3f89a7768ffa6606935319f71bf56bb71871249ba549bf1080a0caea7a088613"
+}
+
 $okModelli = $true
 foreach ($nome in @("Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf", "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf")) {
-    if (-not (Get-FileSePossibile "$urlHf/$nome" (Join-Path $dirQwen $nome))) { $okModelli = $false }
+    $dest = Join-Path $dirQwen $nome
+    if (-not (Get-FileSePossibile "$urlHf/$nome" $dest)) { $okModelli = $false; continue }
+    Write-Host "  verifica SHA-256: $nome" -ForegroundColor Cyan
+    $shaFile = (Get-FileHash -Algorithm SHA256 $dest).Hash.ToLower()
+    if ($shaFile -ne $shaAttesi[$nome]) {
+        Remove-Item $dest -ErrorAction SilentlyContinue
+        Write-Host "  CORROTTO (hash non corrispondente): $nome eliminato. Rilancia lo script per riscaricarlo." -ForegroundColor Red
+        $okModelli = $false
+    }
 }
 
 # llama-server: release pinnata di llama.cpp (build CPU: l'app lo lancia con -ngl 0).

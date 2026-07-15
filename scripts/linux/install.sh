@@ -132,9 +132,28 @@ scarica() { # $1=url $2=destinazione
 }
 
 url_hf="https://huggingface.co/DevQuasar/Qwen.Qwen3-VL-Embedding-2B-GGUF/resolve/main"
+
+# SHA-256 ufficiali (metadati LFS del repo Hugging Face). La verifica e'
+# obbligatoria: un GGUF corrotto NON fa fallire llama-server, produce embedding
+# NaN silenziosi (successo davvero: ricerca rotta senza alcun errore visibile).
+sha_atteso() {
+    case "$1" in
+        "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf")     echo "3f2f9023f15d5f3f084034eb5f14cc04a8e8d89b1f262354db9cf63c50308206" ;;
+        "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf") echo "3f89a7768ffa6606935319f71bf56bb71871249ba549bf1080a0caea7a088613" ;;
+    esac
+}
+
 ok=0
-scarica "$url_hf/Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" "$dir_qwen/Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" || ok=1
-scarica "$url_hf/mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf" "$dir_qwen/mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf" || ok=1
+for nome_gguf in "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf"; do
+    if ! scarica "$url_hf/$nome_gguf" "$dir_qwen/$nome_gguf"; then ok=1; continue; fi
+    echo -e "${CIANO}  verifica SHA-256: $nome_gguf${RESET}"
+    sha_file=$(sha256sum "$dir_qwen/$nome_gguf" | cut -d' ' -f1)
+    if [ "$sha_file" != "$(sha_atteso "$nome_gguf")" ]; then
+        rm -f "$dir_qwen/$nome_gguf"
+        echo -e "${ROSSO}  CORROTTO (hash non corrispondente): $nome_gguf eliminato. Rilancia lo script per riscaricarlo.${RESET}"
+        ok=1
+    fi
+done
 
 # llama-server: release pinnata di llama.cpp (build CPU: l'app lo lancia con -ngl 0).
 # ponytail: versione fissa b10016, da alzare a mano se una futura quantizzazione la richiede.
