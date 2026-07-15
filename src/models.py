@@ -20,7 +20,7 @@ class GestoreQwen:
     libera_memoria() o alla chiusura del processo (atexit).
     """
 
-    def __init__(self):
+    def __init__(self, n_gpu_layers: int = 0):
         import qwen_client
         self._qc = qwen_client
         self.server = qwen_client.LlamaServer(
@@ -30,6 +30,7 @@ class GestoreQwen:
             host=config.QWEN_HOST,
             port=config.QWEN_PORT,
             threads=config.QWEN_THREADS,
+            n_gpu_layers=n_gpu_layers,
         )
         for percorso in (config.PERCORSO_LLAMA_SERVER, config.PERCORSO_MODELLO_QWEN,
                          config.PERCORSO_MMPROJ_QWEN):
@@ -38,7 +39,19 @@ class GestoreQwen:
                     f"File del modello Qwen mancante: {percorso}. "
                     "Copia i file in models/qwen/ (vedi README).")
         print("Avvio llama-server (Qwen3-VL-Embedding-2B)...")
-        self.server.avvia()
+        try:
+            self.server.avvia()
+        except Exception:
+            # Ripiego automatico su CPU: se l'avvio con offload GPU fallisce (VRAM
+            # insufficiente o driver CUDA incompatibile con la build) si riprova senza
+            # GPU, così su macchine con GPU inadeguata l'embedding funziona comunque.
+            if n_gpu_layers > 0:
+                print("Avvio Qwen su GPU fallito (VRAM insufficiente o driver CUDA "
+                      "incompatibile); ripiego su CPU...")
+                self.server.n_gpu_layers = 0
+                self.server.avvia()
+            else:
+                raise
         import atexit
         atexit.register(self.server.ferma)
         print("llama-server pronto.")
@@ -222,7 +235,11 @@ class GestoreModelli:
     def ottieni_qwen(self) -> GestoreQwen:
         with self._lock:
             if self._qwen is None:
-                self._qwen = GestoreQwen()
+                # Offload GPU solo se il dispositivo rilevato è CUDA; su CPU resta 0.
+                # La build CPU di llama-server ignora comunque il flag, e GestoreQwen
+                # ripiega su CPU se l'avvio con GPU fallisce.
+                ngl = config.QWEN_NGL if self.dispositivo == "cuda" else 0
+                self._qwen = GestoreQwen(n_gpu_layers=ngl)
         return self._qwen
 
     def libera_memoria(self):

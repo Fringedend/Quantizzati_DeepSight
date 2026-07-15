@@ -34,6 +34,14 @@ Gli script di installazione e avvio sono divisi per sistema operativo dentro
 > l'installatore, si recuperano con il pulsante **🔁 Riprova falliti** nel pannello
 > coda — i volti (FaceNet) e il parlato (Whisper) non hanno bisogno di Qwen.
 
+> **Qwen su GPU (Windows)**: se l'installatore rileva una GPU NVIDIA con almeno 4 GB
+> di VRAM scarica la build **CUDA** di `llama-server` (~610 MB in più) e Qwen offloada
+> gli embedding sulla GPU; altrimenti — nessuna GPU, VRAM insufficiente, o Linux (dove
+> llama.cpp non pubblica binari CUDA) — resta su **CPU**, pienamente funzionante. Se la
+> GPU non regge (VRAM esaurita o driver CUDA troppo vecchio), l'app **ripiega da sola su
+> CPU** all'avvio. Il numero di strati offloadati è regolabile con `config.QWEN_NGL`
+> (0 = forza CPU). Per cambiare build (CPU↔GPU) svuota `models/qwen/` e rilancia l'installatore.
+
 ### Linux / macOS
 
 ```bash

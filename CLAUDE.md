@@ -109,10 +109,16 @@ creates all `data/` subfolders at import time.
 `models.gestore` (a `GestoreModelli`) picks the device once (`config.MODALITA_DISPOSITIVO`:
 auto/cpu/cuda, falling back to CPU if CUDA is absent) and loads FaceNet/Whisper only on
 first use, same as before. `gestore.ottieni_qwen()` instead lazily spawns `llama-server`
-(`models.GestoreQwen`, driven over HTTP by `src/qwen_client.py`) as a CPU subprocess serving
+(`models.GestoreQwen`, driven over HTTP by `src/qwen_client.py`) as a subprocess serving
 `models/qwen/*.gguf` on `127.0.0.1:8091`; it's stopped by `libera_memoria()` or at process
 exit (`atexit`). The sidebar's "Libera Memoria GPU" button calls `gestore.libera_memoria()`,
-which also kills the llama-server subprocess.
+which also kills the llama-server subprocess. The `-ngl` flag (GPU offload) is no longer
+hardcoded to 0: `ottieni_qwen` passes `config.QWEN_NGL` (default 99) when the detected device
+is `cuda`, else 0, and `GestoreQwen.__init__` retries once with `-ngl 0` if the GPU start
+fails (insufficient VRAM / incompatible CUDA driver). Actual GPU use also needs the CUDA
+build of `llama-server` — the Windows installer fetches it when it detects an NVIDIA GPU with
+≥4 GB VRAM; otherwise (CPU build, or Linux where llama.cpp ships no prebuilt CUDA) `-ngl>0`
+is simply ignored and Qwen runs on CPU.
 
 **Ingestion is a two-speed, resumable staged queue — not one synchronous pipeline.**
 `processor.registra_file` does only the fast, AI-free part synchronously: dedup by
@@ -151,8 +157,11 @@ decoded WAV array to avoid a Windows `ffmpeg.exe` lookup.
 **Qwen's model files are auto-downloaded by the install scripts (~2.1 GB), not
 committed** (GitHub rejects files >100 MB). Both installers end with an idempotent
 download step: the two GGUFs from `DevQuasar/Qwen.Qwen3-VL-Embedding-2B-GGUF` on
-Hugging Face, and `llama-server` (CPU build, plus DLLs/libs) from the pinned llama.cpp
-release `b10016`. Each GGUF is SHA-256-verified against the pinned hashes in the
+Hugging Face, and `llama-server` (plus DLLs/libs) from the pinned llama.cpp
+release `b10016`. On Windows the installer picks the **CUDA 12.4** build (llama zip +
+`cudart` runtime zip, ~610 MB) when it detects an NVIDIA GPU with ≥4 GB VRAM, else the
+**CPU** build (~17 MB); Linux always gets the CPU build (no prebuilt CUDA for Linux in
+that release). Each GGUF is SHA-256-verified against the pinned hashes in the
 scripts — a corrupted GGUF does NOT crash llama-server, it silently yields NaN
 embeddings (happened in practice); on mismatch the file is deleted and re-running the
 installer re-downloads it. On Windows the `.part`→final rename retries up to 5 times:

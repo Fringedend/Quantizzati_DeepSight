@@ -155,7 +155,10 @@ for nome_gguf in "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" "mmproj-Qwen.Qwen3-VL-
     fi
 done
 
-# llama-server: release pinnata di llama.cpp (build CPU: l'app lo lancia con -ngl 0).
+# llama-server: release pinnata di llama.cpp, build CPU. A differenza di Windows qui
+# resta sempre la build CPU: llama.cpp b10016 non pubblica binari CUDA precompilati per
+# Linux (solo ROCm/Vulkan/SYCL), quindi la GPU NVIDIA su Linux richiederebbe la build
+# Vulkan o la compilazione da sorgente (fuori scope). Su CPU l'app lancia con -ngl 0.
 # ponytail: versione fissa b10016, da alzare a mano se una futura quantizzazione la richiede.
 if [ ! -f "$dir_qwen/llama-server" ]; then
     tag_llama="b10016"

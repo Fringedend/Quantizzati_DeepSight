@@ -259,33 +259,67 @@ foreach ($nome in @("Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf", "mmproj-Qwen.Qwen3
     }
 }
 
-# llama-server: release pinnata di llama.cpp (build CPU: l'app lo lancia con -ngl 0).
+# llama-server: release pinnata di llama.cpp. Su GPU NVIDIA con VRAM sufficiente si
+# scarica la build CUDA (Qwen offloada sulla GPU); altrimenti la build CPU (piu' leggera).
 # ponytail: versione fissa b10016, da alzare a mano se una futura quantizzazione la richiede.
 $okServer = $true
 if (-not (Test-Path (Join-Path $dirQwen "llama-server.exe"))) {
     $tagLlama = "b10016"
-    $zipLlama = Join-Path $env:TEMP "llama-$tagLlama-bin-win-cpu-x64.zip"
-    $urlLlama = "https://github.com/ggml-org/llama.cpp/releases/download/$tagLlama/llama-$tagLlama-bin-win-cpu-x64.zip"
-    if (Get-FileSePossibile $urlLlama $zipLlama) {
-        $dirEstrazione = Join-Path $env:TEMP "llama-estratto"
-        if (Test-Path $dirEstrazione) { Remove-Item -Recurse -Force $dirEstrazione }
-        Expand-Archive -Path $zipLlama -DestinationPath $dirEstrazione -Force
-        # Il layout interno dello zip e' cambiato tra le release: si cerca l'exe
-        # ovunque e si copiano exe + DLL dalla sua stessa cartella.
-        $exe = Get-ChildItem -Path $dirEstrazione -Recurse -Filter "llama-server.exe" | Select-Object -First 1
-        if ($exe) {
-            Get-ChildItem -Path $exe.DirectoryName -Include "*.exe","*.dll" -Recurse |
+    $baseLlama = "https://github.com/ggml-org/llama.cpp/releases/download/$tagLlama"
+
+    # Sceglie la build CUDA solo se c'e' una GPU NVIDIA con >= 4 GB di VRAM: l'offload
+    # completo di Qwen occupa ~3-4 GB, sotto tale soglia userebbe comunque la CPU (e si
+    # eviterebbero ~610 MB di download inutili). La build CUDA 12.4 (non 13.3) massimizza
+    # la compatibilita' con driver meno recenti. Se comunque la GPU non regge, l'app
+    # ripiega da sola su CPU all'avvio (vedi models.GestoreQwen).
+    $usaCuda = $false
+    if ($gpuNvidia) {
+        $usaCuda = $true  # se la query VRAM fallisce si prova CUDA: il runtime ripiega su CPU
+        try {
+            $vram = (nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null |
+                     ForEach-Object { [int]($_.Trim()) } | Measure-Object -Maximum).Maximum
+            if ($vram -and $vram -lt 4096) {
+                $usaCuda = $false
+                Write-Host "  GPU con VRAM insufficiente ($vram MB < 4096): uso la build CPU di llama-server." -ForegroundColor Yellow
+            }
+        } catch {}
+    }
+
+    if ($usaCuda) {
+        Write-Host "  GPU NVIDIA adeguata rilevata: scarico la build CUDA di llama-server (~610 MB)." -ForegroundColor Green
+        # Lo zip cudart contiene solo le DLL di runtime CUDA (evita di richiedere il CUDA Toolkit).
+        $zipUrls = @(
+            "$baseLlama/llama-$tagLlama-bin-win-cuda-12.4-x64.zip",
+            "$baseLlama/cudart-llama-bin-win-cuda-12.4-x64.zip"
+        )
+    } else {
+        $zipUrls = @("$baseLlama/llama-$tagLlama-bin-win-cpu-x64.zip")
+    }
+
+    foreach ($urlZip in $zipUrls) {
+        if (-not $okServer) { break }
+        $zipLlama = Join-Path $env:TEMP (Split-Path -Leaf $urlZip)
+        if (Get-FileSePossibile $urlZip $zipLlama) {
+            $dirEstrazione = Join-Path $env:TEMP "llama-estratto"
+            if (Test-Path $dirEstrazione) { Remove-Item -Recurse -Force $dirEstrazione }
+            Expand-Archive -Path $zipLlama -DestinationPath $dirEstrazione -Force
+            # Copia exe + DLL ovunque si trovino nello zip (layout variabile tra release;
+            # lo zip cudart contiene solo DLL, quello llama exe + DLL).
+            Get-ChildItem -Path $dirEstrazione -Include "*.exe","*.dll" -Recurse |
                 Copy-Item -Destination $dirQwen -Force
-            Write-Host "  llama-server.exe installato in models\qwen\" -ForegroundColor Green
-        } else {
-            Write-Host "  FALLITO: llama-server.exe non trovato nello zip." -ForegroundColor Red
-            $okServer = $false
-        }
-        Remove-Item -Recurse -Force $dirEstrazione -ErrorAction SilentlyContinue
-        Remove-Item -Force $zipLlama -ErrorAction SilentlyContinue
-    } else { $okServer = $false }
+            Remove-Item -Recurse -Force $dirEstrazione -ErrorAction SilentlyContinue
+            Remove-Item -Force $zipLlama -ErrorAction SilentlyContinue
+        } else { $okServer = $false }
+    }
+
+    if ($okServer -and (Test-Path (Join-Path $dirQwen "llama-server.exe"))) {
+        Write-Host "  llama-server.exe installato in models\qwen\" -ForegroundColor Green
+    } else {
+        Write-Host "  FALLITO: llama-server.exe non presente dopo l'estrazione." -ForegroundColor Red
+        $okServer = $false
+    }
 } else {
-    Write-Host "  gia' presente: llama-server.exe" -ForegroundColor Green
+    Write-Host "  gia' presente: llama-server.exe (svuota models\qwen\ per cambiare build CPU/GPU)" -ForegroundColor Green
 }
 
 if (-not ($okModelli -and $okServer)) {

@@ -36,6 +36,10 @@ QWEN_PORT = 8091
 # Un core resta libero per la UI: llama-server a piena CPU congela gli
 # aggiornamenti del pannello coda di Streamlit durante gli embedding.
 QWEN_THREADS = max(1, (os.cpu_count() or 2) - 1)
+# Strati Qwen offloadati sulla GPU: 99 = tutti, 0 = forza CPU. Applicato solo se il
+# dispositivo rilevato e' 'cuda' (vedi models.GestoreModelli.ottieni_qwen); la build CPU
+# di llama-server lo ignora comunque, e se l'avvio GPU fallisce si ripiega su CPU.
+QWEN_NGL = 99
 DIM_EMBEDDING_QWEN = 2048  # 2B = 2048-d; NON mescolare con modelli di dimensione diversa
 # Istruzione di retrieval per le QUERY testuali (i documenti/immagini NON ricevono istruzione)
 ISTRUZIONE_RICERCA = "Retrieve images or text relevant to the user's query."

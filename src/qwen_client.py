@@ -94,6 +94,7 @@ class LlamaServer:
         port: int = 8077,
         threads: int = 0,
         context: int = 8192,
+        n_gpu_layers: int = 0,
         startup_timeout_s: int = 240,
     ):
         self.exe = str(exe)
@@ -103,6 +104,7 @@ class LlamaServer:
         self.port = port
         self.threads = threads
         self.context = context
+        self.n_gpu_layers = n_gpu_layers
         self.startup_timeout_s = startup_timeout_s
         self.proc: subprocess.Popen | None = None
         self._log_path: Path | None = None
@@ -120,7 +122,7 @@ class LlamaServer:
             "--pooling", "last",
             "--embd-normalize", "2",
             "-c", str(self.context),
-            "-ngl", "0",              # force CPU: no GPU layers
+            "-ngl", str(self.n_gpu_layers),  # 0 = CPU; >0 = strati su GPU (build CUDA)
             "--host", self.host,
             "--port", str(self.port),
         ]
