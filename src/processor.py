@@ -16,7 +16,9 @@ from models import gestore
 
 # Estensioni dei file multimediali gestiti dall'applicazione
 ESTENSIONI_IMMAGINI = ['.jpg', '.jpeg', '.png']
-ESTENSIONI_VIDEO = ['.mp4', '.avi', '.mov', '.mkv']
+# Le GIF (animate) passano dalla pipeline video: OpenCV ne estrae i frame come
+# da un normale video. Non hanno audio: la trascrizione viene saltata in _prepara_media.
+ESTENSIONI_VIDEO = ['.mp4', '.avi', '.mov', '.mkv', '.gif']
 ESTENSIONI_SUPPORTATE = ESTENSIONI_IMMAGINI + ESTENSIONI_VIDEO
 
 
@@ -372,6 +374,10 @@ def _prepara_media(elemento):
                 conteggio_estratti += 1
             indice_frame += 1
         cattura.release()
+        # Le GIF non hanno traccia audio: trascrizione gia' "fatta", come per le immagini
+        # (evita di caricare Whisper e lanciare ffmpeg su un file senza audio).
+        if os.path.splitext(percorso)[1].lower() == ".gif":
+            database.imposta_stato_stadio(id_media, "stato_trascrizione", 1)
         database.aggiorna_stato_elaborazione(
             id_media=id_media, data_creazione=data_creazione,
             larghezza=proprieta["larghezza"], altezza=proprieta["altezza"],

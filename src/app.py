@@ -574,6 +574,16 @@ def immagine_per_display(percorso, lato_max=None):
         # Se PIL non riesce ad aprirla, lascia fare a st.image
         return percorso
 
+def mostra_player_video(percorso, **kwargs):
+    """Player per gli elementi 'video'. Le GIF sono video per la pipeline ma
+    st.video non le riproduce (HTML5 <video> non supporta image/gif): st.image
+    invece le anima nativamente nel browser. kwargs (es. start_time) valgono
+    solo per i veri video."""
+    if percorso.lower().endswith(".gif"):
+        st.image(percorso, width="stretch")
+    else:
+        st.video(percorso, **kwargs)
+
 def ottieni_stringa_dimensione_file(dimensione_in_byte):
     """Converte una dimensione in byte in formato leggibile (KB, MB, GB)."""
     for unita in ['B', 'KB', 'MB', 'GB']:
@@ -918,7 +928,7 @@ if menu == "📊 Dashboard":
                     # Per i video mostra un vero player (riproducibile); per le immagini
                     # la miniatura. Se il video non fosse disponibile si ripiega sulla miniatura.
                     if elemento["media_type"] == "video" and os.path.exists(elemento["file_path"]):
-                        st.video(elemento["file_path"])
+                        mostra_player_video(elemento["file_path"])
                     elif percorso_anteprima and os.path.exists(percorso_anteprima):
                         st.image(immagine_per_display(percorso_anteprima, lato_max=1000), width="stretch")
     else:
@@ -1003,7 +1013,7 @@ elif menu == "🖼️ Galleria":
                         st.write(f"**Dimensione:** {ottieni_stringa_dimensione_file(elemento['file_size'] or 0)}")
 
                         if elemento["media_type"] == "video" and os.path.exists(elemento["file_path"]):
-                            st.video(elemento["file_path"])
+                            mostra_player_video(elemento["file_path"])
 
                         if os.path.exists(elemento["file_path"]):
                             with open(elemento["file_path"], "rb") as dati_file:
@@ -1033,7 +1043,7 @@ elif menu == "📤 Caricamento & Import":
     if modalita_caricamento == "file":
         file_caricati = st.file_uploader(
             "Seleziona Immagini o Video da importare", 
-            type=["jpg", "jpeg", "png", "mp4", "avi", "mov", "mkv"],
+            type=["jpg", "jpeg", "png", "mp4", "avi", "mov", "mkv", "gif"],
             accept_multiple_files=True
         )
         
@@ -1484,7 +1494,7 @@ elif menu == "🔍 Ricerca Avanzata":
                         st.write("---")
                         timestamp_formattato = str(datetime.timedelta(seconds=int(elemento["timestamp_seconds"])))
                         st.markdown(f"**Riproduci Video a {timestamp_formattato}:**")
-                        st.video(elemento["file_path"], start_time=int(elemento["timestamp_seconds"]))
+                        mostra_player_video(elemento["file_path"], start_time=int(elemento["timestamp_seconds"]))
                         
                     # Bottone per scaricare il file originale
                     if os.path.exists(elemento["file_path"]):
