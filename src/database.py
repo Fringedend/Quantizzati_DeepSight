@@ -487,6 +487,35 @@ def ottieni_tutti_elementi_multimediali(solo_elaborati=True):
     colonne = [col[0] for col in cursore.description]
     return [dict(zip(colonne, r)) for r in righe]
 
+def ottieni_elementi_multimediali(id_media_lista):
+    """Recupera più elementi preservando l'ordine degli ID richiesti."""
+    ids = list(dict.fromkeys(int(i) for i in id_media_lista))
+    if not ids:
+        return []
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    segnaposto = ",".join("?" for _ in ids)
+    cursore.execute(f"SELECT * FROM media_items WHERE id IN ({segnaposto})", ids)
+    righe = cursore.fetchall()
+    colonne = [col[0] for col in cursore.description]
+    connessione.close()
+    per_id = {r[0]: dict(zip(colonne, r)) for r in righe}
+    return [per_id[i] for i in ids if i in per_id]
+
+def conteggio_media_cercabili():
+    """Numero di media con almeno un embedding, quindi realmente ricercabili."""
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    cursore.execute("""
+        SELECT COUNT(DISTINCT f.media_id)
+        FROM media_frames f
+        JOIN media_items m ON m.id = f.media_id
+        WHERE m.processed = 1 AND f.clip_embedding IS NOT NULL
+    """)
+    conteggio = cursore.fetchone()[0]
+    connessione.close()
+    return conteggio
+
 def ottieni_percorsi_archiviati():
     """Restituisce l'insieme (normalizzato) dei percorsi file registrati nel database.
 
@@ -571,6 +600,27 @@ def elimina_elemento_multimediale(id_media):
                     os.remove(file_da_rimuovere)
         except Exception as errore:
             print(f"Errore durante la rimozione della miniatura per {percorso_originale}: {errore}")
+
+def elimina_elementi_multimediali(id_media_lista):
+    """Elimina più media, continuando sugli altri in caso di errore.
+
+    Ritorna ``(id_eliminati, errori)``; ``errori`` mappa l'ID al messaggio.
+    """
+    eliminati = []
+    errori = {}
+    for id_media in dict.fromkeys(int(i) for i in id_media_lista):
+        try:
+            if ottieni_elemento_multimediale(id_media) is None:
+                errori[id_media] = "Elemento non trovato"
+                continue
+            elimina_elemento_multimediale(id_media)
+            if ottieni_elemento_multimediale(id_media) is None:
+                eliminati.append(id_media)
+            else:
+                errori[id_media] = "Il record non è stato eliminato"
+        except Exception as errore:
+            errori[id_media] = str(errore)
+    return eliminati, errori
 
 def ottieni_statistiche_db():
     """Restituisce le statistiche sul database dell'archivio (conteggi, dimensioni, ecc.)."""

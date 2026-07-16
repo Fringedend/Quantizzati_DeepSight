@@ -10,6 +10,7 @@ from PIL import Image, ImageOps
 import config
 import database
 import processor
+import gallery_utils
 from models import gestore
 
 # Percorso del logo blu (src/assets/logo_blu.png). Risolto da __file__ così vale
@@ -741,6 +742,181 @@ def deduplica_risultati(risultati_ricerca):
     return risultati_deduplicati
 
 
+CHIAVE_SELEZIONE_GALLERIA = "galleria_id_selezionati"
+PREFISSO_CHECKBOX_GALLERIA = "gal_sel_"
+
+
+def id_selezionati_galleria():
+    return set(st.session_state.get(CHIAVE_SELEZIONE_GALLERIA, []))
+
+
+def invalida_zip_galleria():
+    percorso = st.session_state.pop("galleria_zip_path", None)
+    st.session_state.pop("galleria_zip_ids", None)
+    st.session_state.pop("galleria_zip_mancanti", None)
+    if percorso and os.path.exists(percorso):
+        try:
+            os.remove(percorso)
+        except OSError:
+            pass
+
+
+def salva_selezione_galleria(ids, aggiorna_checkbox=False):
+    ids = sorted(set(int(i) for i in ids))
+    if ids != st.session_state.get(CHIAVE_SELEZIONE_GALLERIA, []):
+        invalida_zip_galleria()
+    st.session_state[CHIAVE_SELEZIONE_GALLERIA] = ids
+    if aggiorna_checkbox:
+        insieme = set(ids)
+        for chiave in list(st.session_state):
+            if chiave.startswith(PREFISSO_CHECKBOX_GALLERIA):
+                try:
+                    id_media = int(chiave[len(PREFISSO_CHECKBOX_GALLERIA):])
+                    st.session_state[chiave] = id_media in insieme
+                except ValueError:
+                    continue
+
+
+def aggiorna_selezione_da_checkbox(id_media):
+    selezionati = id_selezionati_galleria()
+    if st.session_state.get(f"{PREFISSO_CHECKBOX_GALLERIA}{id_media}"):
+        selezionati.add(id_media)
+    else:
+        selezionati.discard(id_media)
+    salva_selezione_galleria(selezionati)
+
+
+def richiedi_conferma_eliminazione(ids):
+    st.session_state["eliminazione_da_confermare"] = sorted(set(int(i) for i in ids))
+    st.rerun()
+
+
+@st.dialog("Conferma eliminazione")
+def dialogo_conferma_eliminazione():
+    ids = st.session_state.get("eliminazione_da_confermare", [])
+    elementi = database.ottieni_elementi_multimediali(ids)
+    if not elementi:
+        st.warning("Gli elementi selezionati non sono più presenti nell'archivio.")
+        if st.button("Chiudi", width="stretch"):
+            st.session_state.pop("eliminazione_da_confermare", None)
+            st.rerun()
+        return
+
+    quanti = len(elementi)
+    st.warning(
+        f"Stai per eliminare definitivamente **{quanti} "
+        f"{'elemento' if quanti == 1 else 'elementi'}**. Verranno rimossi anche "
+        "gli originali e tutti i dati associati. Vuoi continuare?"
+    )
+    with st.container(height=180 if quanti > 6 else "content", border=True):
+        for elemento in elementi:
+            st.write(f"- `{elemento['filename']}`")
+
+    col_annulla, col_elimina = st.columns(2)
+    if col_annulla.button("Annulla", width="stretch"):
+        st.session_state.pop("eliminazione_da_confermare", None)
+        st.rerun()
+    if col_elimina.button(
+        f"Elimina {quanti} {'elemento' if quanti == 1 else 'elementi'}",
+        type="primary",
+        width="stretch",
+    ):
+        eliminati, errori = database.elimina_elementi_multimediali(ids)
+        selezionati = id_selezionati_galleria() - set(eliminati)
+        salva_selezione_galleria(selezionati, aggiorna_checkbox=True)
+        st.session_state.pop("eliminazione_da_confermare", None)
+        st.session_state["esito_eliminazione"] = {
+            "eliminati": len(eliminati),
+            "errori": len(errori),
+        }
+        st.rerun()
+
+
+def prepara_zip_galleria(ids):
+    invalida_zip_galleria()
+    elementi = database.ottieni_elementi_multimediali(ids)
+    temporaneo = tempfile.NamedTemporaryFile(prefix="deepsight-galleria-", suffix=".zip", delete=False)
+    percorso = temporaneo.name
+    temporaneo.close()
+    try:
+        inclusi, mancanti = gallery_utils.crea_zip_originali(elementi, percorso)
+    except Exception:
+        if os.path.exists(percorso):
+            os.remove(percorso)
+        raise
+    if not inclusi:
+        if os.path.exists(percorso):
+            os.remove(percorso)
+        return [], mancanti
+    st.session_state["galleria_zip_path"] = percorso
+    st.session_state["galleria_zip_ids"] = sorted(ids)
+    st.session_state["galleria_zip_mancanti"] = mancanti
+    return inclusi, mancanti
+
+
+def vai_a_pagina_galleria(pagina):
+    st.session_state["gal_pagina_corrente"] = int(pagina)
+    st.rerun()
+
+
+def mostra_paginatore_galleria(
+    pagina_corrente, totale_pagine, totale_elementi, inizio, fine, scorrimento_continuo=False
+):
+    """Controlli esclusivamente in fondo alla Galleria, senza tendina della pagina."""
+    st.markdown("---")
+    if scorrimento_continuo:
+        st.caption(f"{totale_elementi} elementi · scorrimento continuo")
+    else:
+        st.caption(
+            f"Elementi {inizio + 1 if totale_elementi else 0}–{fine} di {totale_elementi} "
+            f"· pagina {pagina_corrente} di {totale_pagine}"
+        )
+    col_quantita, col_spazio = st.columns([1, 3])
+    with col_quantita:
+        st.selectbox(
+            "Visualizzazione",
+            ["16", "24", "48", "96", "continuo"],
+            key="gal_elementi_per_pagina",
+            format_func=lambda valore: (
+                "Scorrimento continuo" if valore == "continuo" else f"{valore} per pagina"
+            ),
+        )
+
+    if scorrimento_continuo:
+        return
+
+    pagine = gallery_utils.pagine_compatte(pagina_corrente, totale_pagine)
+    larghezze = [1.35] + [0.55] * len(pagine) + [1.35]
+    colonne = st.columns(larghezze)
+    if colonne[0].button(
+        "← Precedente", key="gal_pag_precedente", width="stretch",
+        disabled=pagina_corrente <= 1,
+    ):
+        vai_a_pagina_galleria(pagina_corrente - 1)
+
+    for indice, pagina in enumerate(pagine, start=1):
+        if pagina is None:
+            colonne[indice].markdown(
+                "<div style='text-align:center;padding-top:0.45rem'>…</div>",
+                unsafe_allow_html=True,
+            )
+            continue
+        if colonne[indice].button(
+            str(pagina),
+            key=f"gal_pag_num_{pagina}",
+            type="primary" if pagina == pagina_corrente else "secondary",
+            disabled=pagina == pagina_corrente,
+            width="stretch",
+        ):
+            vai_a_pagina_galleria(pagina)
+
+    if colonne[-1].button(
+        "Successiva →", key="gal_pag_successiva", width="stretch",
+        disabled=pagina_corrente >= totale_pagine,
+    ):
+        vai_a_pagina_galleria(pagina_corrente + 1)
+
+
 # (I filtri di ricerca sono stati spostati nella pagina "Ricerca Avanzata".)
 
 # Pannello coda: si auto-aggiorna ogni secondo ed e' visibile da ogni pagina.
@@ -808,6 +984,14 @@ n_problemi = len(file_intrusi) + len(record_orfani)
 esito = st.session_state.pop("esito_integrita", None)
 if esito:
     st.toast(esito["testo"], icon=esito["icona"])
+esito_eliminazione = st.session_state.pop("esito_eliminazione", None)
+if esito_eliminazione:
+    eliminati = esito_eliminazione["eliminati"]
+    errori = esito_eliminazione["errori"]
+    if eliminati:
+        st.toast(f"Eliminati {eliminati} elementi dall'archivio.", icon="✅")
+    if errori:
+        st.toast(f"Impossibile eliminare {errori} elementi.", icon="⚠️")
 
 contenitore_navbar = st.container(key="navbar")
 with contenitore_navbar:
@@ -853,6 +1037,9 @@ with st.container(key="fab_caricamento"):
 st.markdown("<hr style='margin-top: 0.5rem; margin-bottom: 2rem; border-color: var(--bordo);'>", unsafe_allow_html=True)
 
 menu = st.session_state.selezione_menu
+
+if st.session_state.get("eliminazione_da_confermare"):
+    dialogo_conferma_eliminazione()
 
 
 # --- 1. SCHEDA DASHBOARD ---
@@ -944,91 +1131,178 @@ elif menu == "🖼️ Galleria":
     if not elementi_galleria:
         st.info("Nessun elemento presente nell'archivio. Vai alla scheda 'Caricamento' per importare contenuti.")
     else:
-        # Controlli: filtro per tipo, ordinamento e paginazione
-        col_gal1, col_gal2, col_gal3 = st.columns([1, 1, 1])
+        # In cima restano solo ricerca e filtri. Tutta la paginazione è in fondo.
+        col_gal1, col_gal2, col_gal3 = st.columns([2, 1, 1])
         with col_gal1:
-            tipo_galleria = st.selectbox("Tipo di file", ["Tutti", "Immagini", "Video"], key="gal_tipo")
+            ricerca_galleria = st.text_input(
+                "Cerca nella galleria",
+                placeholder="Nome, luogo o data (es. 16/07/2026)",
+                key="gal_ricerca_semplice",
+            )
         with col_gal2:
+            tipo_galleria = st.selectbox("Tipo di file", ["Tutti", "Immagini", "Video"], key="gal_tipo")
+        with col_gal3:
             ordinamento_galleria = st.selectbox("Ordina per", ["Più recenti", "Meno recenti", "Nome (A-Z)"], key="gal_ordine")
 
-        if tipo_galleria != "Tutti":
-            tipo_voluto = "image" if tipo_galleria == "Immagini" else "video"
-            elementi_galleria = [e for e in elementi_galleria if e["media_type"] == tipo_voluto]
+        elementi_filtrati = gallery_utils.filtra_e_ordina_elementi(
+            elementi_galleria,
+            ricerca_galleria,
+            tipo_galleria,
+            ordinamento_galleria,
+        )
 
-        if ordinamento_galleria == "Nome (A-Z)":
-            elementi_galleria.sort(key=lambda e: (e["filename"] or "").lower())
+        # Mantiene solo ID ancora esistenti, senza perdere la selezione tra le pagine.
+        ids_esistenti = {e["id"] for e in elementi_galleria}
+        selezionati = id_selezionati_galleria() & ids_esistenti
+        salva_selezione_galleria(selezionati)
+
+        if "gal_elementi_per_pagina" not in st.session_state:
+            st.session_state["gal_elementi_per_pagina"] = "24"
+        elif isinstance(st.session_state["gal_elementi_per_pagina"], int):
+            # Compatibilità con sessioni avviate prima dell'opzione di scorrimento continuo.
+            st.session_state["gal_elementi_per_pagina"] = str(
+                st.session_state["gal_elementi_per_pagina"]
+            )
+        visualizzazione = st.session_state["gal_elementi_per_pagina"]
+        scorrimento_continuo = visualizzazione == "continuo"
+        elementi_per_pagina = None if scorrimento_continuo else int(visualizzazione)
+
+        firma_filtri = (
+            ricerca_galleria.casefold().strip(),
+            tipo_galleria,
+            ordinamento_galleria,
+            visualizzazione,
+        )
+        if st.session_state.get("gal_firma_filtri") != firma_filtri:
+            st.session_state["gal_firma_filtri"] = firma_filtri
+            st.session_state["gal_pagina_corrente"] = 1
+
+        totale_elementi = len(elementi_filtrati)
+        totale_pagine = (
+            1 if scorrimento_continuo
+            else max(1, -(-totale_elementi // elementi_per_pagina))
+        )
+        pagina_corrente = min(
+            max(1, st.session_state.get("gal_pagina_corrente", 1)),
+            totale_pagine,
+        )
+        st.session_state["gal_pagina_corrente"] = pagina_corrente
+        inizio_pagina = 0 if scorrimento_continuo else (pagina_corrente - 1) * elementi_per_pagina
+        fine_pagina = (
+            totale_elementi if scorrimento_continuo
+            else min(inizio_pagina + elementi_per_pagina, totale_elementi)
+        )
+        elementi_visibili = elementi_filtrati[inizio_pagina:fine_pagina]
+        ids_visibili = {e["id"] for e in elementi_visibili}
+
+        # Azioni di selezione, separate dalla paginazione.
+        n_visibili_selezionati = len(selezionati & ids_visibili)
+        n_nascosti_selezionati = len(selezionati - ids_visibili)
+        testo_selezione = f"**{len(selezionati)} selezionati** · {n_visibili_selezionati} in questa pagina"
+        if n_nascosti_selezionati:
+            testo_selezione += f" · {n_nascosti_selezionati} non visibili"
+        st.markdown(testo_selezione)
+
+        col_sel1, col_sel2, col_sel3, col_zip, col_del = st.columns([1, 1, 1, 1, 1])
+        if col_sel1.button("Seleziona pagina", width="stretch", disabled=not elementi_visibili):
+            salva_selezione_galleria(selezionati | ids_visibili, aggiorna_checkbox=True)
+            st.rerun()
+        if col_sel2.button("Deseleziona pagina", width="stretch", disabled=not n_visibili_selezionati):
+            salva_selezione_galleria(selezionati - ids_visibili, aggiorna_checkbox=True)
+            st.rerun()
+        if col_sel3.button("Svuota selezione", width="stretch", disabled=not selezionati):
+            salva_selezione_galleria([], aggiorna_checkbox=True)
+            st.rerun()
+        if col_zip.button("Prepara ZIP", width="stretch", disabled=not selezionati):
+            with st.spinner("Creazione dello ZIP degli originali..."):
+                try:
+                    inclusi, mancanti = prepara_zip_galleria(selezionati)
+                    if inclusi:
+                        st.success(f"ZIP pronto con {len(inclusi)} elementi.")
+                    if mancanti:
+                        st.warning(f"{len(mancanti)} originali non sono stati trovati e sono stati esclusi.")
+                except Exception as errore:
+                    st.error(f"Impossibile creare lo ZIP: {errore}")
+        if col_del.button("Elimina selezionati", type="primary", width="stretch", disabled=not selezionati):
+            richiedi_conferma_eliminazione(selezionati)
+
+        percorso_zip = st.session_state.get("galleria_zip_path")
+        if percorso_zip and os.path.exists(percorso_zip):
+            mancanti_zip = st.session_state.get("galleria_zip_mancanti", [])
+            if mancanti_zip:
+                st.warning(f"ZIP creato senza {len(mancanti_zip)} originali non trovati.")
+            with open(percorso_zip, "rb") as dati_zip:
+                st.download_button(
+                    "⬇️ Scarica originali selezionati (.zip)",
+                    data=dati_zip,
+                    file_name="deepsight-selezione.zip",
+                    mime="application/zip",
+                    key="gal_download_zip",
+                )
+
+        if not elementi_filtrati:
+            st.info("Nessun elemento corrisponde alla ricerca e ai filtri selezionati.")
         else:
-            # Le date ISO si ordinano correttamente come stringhe; chi non ha data
-            # (stringa vuota) finisce in fondo nell'ordinamento "Più recenti".
-            elementi_galleria.sort(
-                key=lambda e: (e["creation_date"] or "", e["id"]),
-                reverse=(ordinamento_galleria == "Più recenti"),
-            )
-
-        ELEMENTI_PER_PAGINA = 24
-        totale_pagine = max(1, -(-len(elementi_galleria) // ELEMENTI_PER_PAGINA))
-        with col_gal3:
-            # La key include il totale: se filtri/archivio cambiano il numero di
-            # pagine, il widget viene ricreato (etichette "N di M" fresche e
-            # pagina che riparte da 1 invece di restare oltre il nuovo massimo).
-            pagina_corrente = st.selectbox(
-                "Pagina",
-                list(range(1, totale_pagine + 1)),
-                format_func=lambda p: f"{p} di {totale_pagine}",
-                key=f"gal_pagina_{totale_pagine}",
-            )
-        st.caption(f"{len(elementi_galleria)} elementi" + (f" · pagina {pagina_corrente} di {totale_pagine}" if totale_pagine > 1 else ""))
-
-        inizio_pagina = (pagina_corrente - 1) * ELEMENTI_PER_PAGINA
-        elementi_visibili = elementi_galleria[inizio_pagina:inizio_pagina + ELEMENTI_PER_PAGINA]
-
-        # Container con key: il CSS lo trasforma in una griglia responsive e ritaglia le foto
-        # in quadrati uniformi (stile Google Foto) solo qui, non nelle altre griglie.
-        with st.container(key="galleria_griglia"):
-            for elemento in elementi_visibili:
-                with st.container():
-                    st.markdown(f"""
-                    <div class="result-card">
-                        <div class="result-meta">
-                            <div class="result-title" title="{elemento['filename']}">{elemento['filename']}</div>
-                            <div style="opacity:0.7; font-size:0.8rem;">
-                                Tipo: {elemento['media_type'].upper()} | {elemento['width']}x{elemento['height']} <br>
-                                📅 {elemento['creation_date'].split('T')[0] if elemento['creation_date'] else 'N/D'} &nbsp;·&nbsp; 📍 {elemento.get('location_name') or 'N/D'}
+            # Container con key: il CSS lo trasforma in una griglia responsive e ritaglia le foto.
+            with st.container(key="galleria_griglia"):
+                for elemento in elementi_visibili:
+                    with st.container():
+                        chiave_checkbox = f"{PREFISSO_CHECKBOX_GALLERIA}{elemento['id']}"
+                        st.session_state[chiave_checkbox] = elemento["id"] in selezionati
+                        st.checkbox(
+                            "Seleziona",
+                            key=chiave_checkbox,
+                            on_change=aggiorna_selezione_da_checkbox,
+                            args=(elemento["id"],),
+                        )
+                        st.markdown(f"""
+                        <div class="result-card">
+                            <div class="result-meta">
+                                <div class="result-title" title="{elemento['filename']}">{elemento['filename']}</div>
+                                <div style="opacity:0.7; font-size:0.8rem;">
+                                    Tipo: {elemento['media_type'].upper()} | {elemento['width']}x{elemento['height']} <br>
+                                    📅 {elemento['creation_date'].split('T')[0] if elemento['creation_date'] else 'N/D'} &nbsp;·&nbsp; 📍 {elemento.get('location_name') or 'N/D'}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
 
-                    # Immagini: foto vera ridotta al volo (nitida, la miniatura da 300px
-                    # stirata risulterebbe sfocata). Video: miniatura del primo frame.
-                    if elemento["media_type"] == "image" and os.path.exists(elemento["file_path"]):
-                        st.image(immagine_per_display(elemento["file_path"], lato_max=1000), width="stretch")
-                    else:
-                        percorso_anteprima = percorso_anteprima_elemento(elemento["file_path"])
-                        if percorso_anteprima:
-                            st.image(percorso_anteprima, width="stretch")
+                        if elemento["media_type"] == "image" and os.path.exists(elemento["file_path"]):
+                            st.image(immagine_per_display(elemento["file_path"], lato_max=1000), width="stretch")
+                        else:
+                            percorso_anteprima = percorso_anteprima_elemento(elemento["file_path"])
+                            if percorso_anteprima:
+                                st.image(percorso_anteprima, width="stretch")
 
-                    with st.expander("Azioni e Dettagli"):
-                        st.write(f"**Percorso file:** `{elemento['file_path']}`")
-                        st.write(f"**Dimensione:** {ottieni_stringa_dimensione_file(elemento['file_size'] or 0)}")
+                        with st.expander("Azioni e Dettagli"):
+                            st.write(f"**Percorso file:** `{elemento['file_path']}`")
+                            st.write(f"**Dimensione:** {ottieni_stringa_dimensione_file(elemento['file_size'] or 0)}")
 
-                        if elemento["media_type"] == "video" and os.path.exists(elemento["file_path"]):
-                            mostra_player_video(elemento["file_path"])
+                            if elemento["media_type"] == "video" and os.path.exists(elemento["file_path"]):
+                                mostra_player_video(elemento["file_path"])
 
-                        if os.path.exists(elemento["file_path"]):
-                            with open(elemento["file_path"], "rb") as dati_file:
-                                st.download_button(
-                                    label="⬇️ Scarica File Originale",
-                                    data=dati_file,
-                                    file_name=elemento["filename"],
-                                    mime="application/octet-stream",
-                                    key=f"gal_dl_{elemento['id']}"
-                                )
+                            if os.path.exists(elemento["file_path"]):
+                                with open(elemento["file_path"], "rb") as dati_file:
+                                    st.download_button(
+                                        label="⬇️ Scarica File Originale",
+                                        data=dati_file,
+                                        file_name=elemento["filename"],
+                                        mime="application/octet-stream",
+                                        key=f"gal_dl_{elemento['id']}"
+                                    )
 
-                        if st.button("🗑️ Elimina dall'Archivio", key=f"gal_del_{elemento['id']}"):
-                            database.elimina_elemento_multimediale(elemento["id"])
-                            st.success("File eliminato dall'archivio con successo!")
-                            st.rerun()
+                            if st.button("🗑️ Elimina dall'Archivio", key=f"gal_del_{elemento['id']}"):
+                                richiedi_conferma_eliminazione([elemento["id"]])
+
+            # Ultimo blocco della pagina: nessun controllo di paginazione compare in cima.
+            mostra_paginatore_galleria(
+                pagina_corrente,
+                totale_pagine,
+                totale_elementi,
+                inizio_pagina,
+                fine_pagina,
+                scorrimento_continuo,
+            )
 
 
 # --- 3. SCHEDA CARICAMENTO & IMPORT ---
@@ -1196,6 +1470,26 @@ elif menu == "👤 Persone":
 elif menu == "🔍 Ricerca Avanzata":
     st.markdown("<h1 class='main-title'>Motore di Ricerca AI</h1>", unsafe_allow_html=True)
     st.markdown("<p class='subtitle'>Cerca nel tuo archivio con semantica testuale, similarità visiva o volti</p>", unsafe_allow_html=True)
+
+    statistiche_ricerca = database.ottieni_statistiche_db()
+    if statistiche_ricerca["total_items"] == 0:
+        st.warning(
+            "L'archivio è vuoto. Carica almeno una foto, un video o una GIF "
+            "prima di eseguire una ricerca."
+        )
+        if st.button("📤 Vai al caricamento", key="ricerca_vuota_carica", type="primary"):
+            st.session_state.selezione_menu = "📤 Caricamento & Import"
+            st.session_state.modalita_caricamento = "file"
+            st.rerun()
+        # Non inizializzare Qwen né interrogare Chroma quando non esistono contenuti.
+        st.stop()
+
+    if database.conteggio_media_cercabili() == 0:
+        st.info(
+            "I contenuti dell'archivio non sono ancora pronti per la ricerca. "
+            "Attendi il completamento dell'elaborazione indicata nella barra laterale."
+        )
+        st.stop()
 
     # --- FILTRI DI RICERCA (applicati ai risultati di tutte le modalità) ---
     with st.expander("🎛️ Filtri di ricerca", expanded=False):
@@ -1509,9 +1803,7 @@ elif menu == "🔍 Ricerca Avanzata":
                             
                     # Bottone per eliminare l'elemento dall'archivio
                     if st.button("🗑️ Elimina dall'Archivio", key=f"del_{elemento['media_id']}_{idx}"):
-                        database.elimina_elemento_multimediale(elemento["media_id"])
-                        st.success("File eliminato dall'archivio con successo!")
-                        st.rerun()
+                        richiedi_conferma_eliminazione([elemento["media_id"]])
 
         if len(risultati) > n_mostrati:
             if st.button(f"➕ Mostra altri ({len(risultati) - n_mostrati} rimanenti)",

@@ -27,6 +27,7 @@ def esegui_test():
     emb /= np.linalg.norm(emb)
     database.aggiorna_embedding_frame(id_frame, id_media, emb, ["cat"])
     assert database.ottieni_frame_di_media(id_media)[0]["clip_embedding_presente"] is True
+    assert database.conteggio_media_cercabili() == 0  # il media non e' ancora processed
 
     # coda: media appena registrato (processed=0) -> preparazione
     lavoro = database.prossimo_media_in_coda()
@@ -37,6 +38,8 @@ def esegui_test():
     for col in ("stato_embedding", "stato_volti", "stato_trascrizione"):
         database.imposta_stato_stadio(id_media, col, 1)
     assert database.prossimo_media_in_coda() is None
+    assert database.conteggio_media_cercabili() == 1
+    assert database.ottieni_elementi_multimediali([id_media])[0]["filename"] == "x.jpg"
     conteggi = database.conteggio_coda()
     assert conteggi["da_preparare"] == 0 and conteggi["embedding"] == 0
 
@@ -53,6 +56,12 @@ def esegui_test():
     assert persone[0]["name"] == "Mario" and persone[0]["n_volti"] == 1
     media_p = database.ottieni_media_di_persona(id_p)
     assert len(media_p) == 1 and media_p[0]["id"] == id_media
+
+    # eliminazione multipla: ID validi, duplicati e mancanti
+    eliminati, errori = database.elimina_elementi_multimediali([id_media, id_media, 999999])
+    assert eliminati == [id_media]
+    assert errori == {999999: "Elemento non trovato"}
+    assert database.ottieni_elemento_multimediale(id_media) is None
     print("test_database: OK")
 
 if __name__ == "__main__":
