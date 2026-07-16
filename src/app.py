@@ -269,6 +269,10 @@ st.markdown("""
         background: var(--superficie);
         border-right: 1px solid var(--bordo);
     }
+    /* Sidebar a larghezza fissa: nasconde la maniglia di trascinamento sul bordo
+       (selettore sullo stile inline: le classi emotion sono hash instabili).
+       Il pulsante di collasso (stSidebarCollapseButton) resta funzionante. */
+    [data-testid="stSidebar"] div[style*="col-resize"] { display: none; }
 
     /* Intestazioni di sezione (### ...) con barretta accento a sinistra */
     .stApp h3 {
