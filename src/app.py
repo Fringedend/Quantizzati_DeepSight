@@ -1,4 +1,5 @@
 import streamlit as st
+import io
 import os
 import sys
 import subprocess
@@ -25,8 +26,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Inizializza il database locale all'avvio
-database.inizializza_db()
+# Inizializza il database locale all'avvio — UNA volta per processo, non a ogni
+# rerun: Streamlit riesegue tutto lo script a ogni click, e ripetere CREATE TABLE,
+# check migrazione e i count() Chroma allunga ogni interazione.
+@st.cache_resource(show_spinner=False)
+def _inizializza_db_una_volta():
+    database.inizializza_db()
+    return True
+
+_inizializza_db_una_volta()
 
 # Backfill una tantum (offline): popola il nome del luogo dalle coordinate GPS per gli
 # elementi già in archivio che ne sono privi. Eseguito una sola volta per sessione;
@@ -550,6 +558,10 @@ def percorso_anteprima_elemento(percorso_file):
     percorso = os.path.join(config.DIR_ANTEPRIME, f"{nome_senza_est}.jpg")
     return percorso if os.path.exists(percorso) else None
 
+# cache_resource (niente copia pickle a ogni hit): l'immagine è di sola lettura e i file
+# d'archivio sono immutabili (nome = hash), quindi il percorso identifica il contenuto.
+# Senza cache ogni rerun (un click su una checkbox!) ridecodificava l'intera pagina.
+@st.cache_resource(max_entries=300, show_spinner=False)
 def immagine_per_display(percorso, lato_max=None):
     """Apre un'immagine applicando l'orientamento EXIF, per passarla a st.image.
 
@@ -561,6 +573,10 @@ def immagine_per_display(percorso, lato_max=None):
     la foto originale (nitida, a differenza delle miniature da 300px stirate) ma
     ridimensionata. La decodifica JPEG avviene già a scala ridotta (draft), quindi
     il costo è vicino a quello di una miniatura.
+
+    Ritorna i BYTE JPEG già codificati (non l'oggetto PIL): a un PIL, st.image
+    rifarebbe la codifica in PNG a OGNI rerun per ogni tessera; sui byte fa solo
+    un hash, praticamente gratis.
     """
     try:
         with Image.open(percorso) as img:
@@ -569,8 +585,10 @@ def immagine_per_display(percorso, lato_max=None):
             img = ImageOps.exif_transpose(img)
             if lato_max:
                 img.thumbnail((lato_max, lato_max))
-            img.load()
-        return img
+            buffer = io.BytesIO()
+            # JPEG non supporta alfa/palette: converte qualsiasi modalità non-RGB
+            img.convert("RGB").save(buffer, "JPEG", quality=85)
+        return buffer.getvalue()
     except Exception:
         # Se PIL non riesce ad aprirla, lascia fare a st.image
         return percorso
@@ -584,6 +602,22 @@ def mostra_player_video(percorso, **kwargs):
         st.image(percorso, width="stretch")
     else:
         st.video(percorso, **kwargs)
+
+def bottone_scarica(percorso, nome_file, chiave):
+    """Download a due passi: il file viene letto solo dopo il click su 'Prepara'.
+
+    ponytail: prima ogni rerun apriva e leggeva in RAM TUTTI gli originali della
+    pagina (video inclusi) per i download_button dentro expander chiusi.
+    """
+    if st.session_state.get("dl_pronto") == chiave:
+        with open(percorso, "rb") as dati_file:
+            st.download_button("⬇️ Scarica File Originale", data=dati_file,
+                               file_name=nome_file, mime="application/octet-stream",
+                               key=f"{chiave}_go")
+    else:
+        st.button("⬇️ Prepara download", key=chiave,
+                  on_click=lambda c=chiave: st.session_state.update(dl_pronto=c))
+
 
 def ottieni_stringa_dimensione_file(dimensione_in_byte):
     """Converte una dimensione in byte in formato leggibile (KB, MB, GB)."""
@@ -656,6 +690,7 @@ def pannello_integrita(file_intrusi, record_orfani):
                     f"Falliti: {falliti}."
                 ),
             }
+            _scansione_integrita.clear()
             st.rerun()
         if st.button("🧹 Sposta in quarantena", key="btn_quarantena_intrusi", width='stretch'):
             spostati = processor.sposta_file_intrusi_in_quarantena()
@@ -663,6 +698,7 @@ def pannello_integrita(file_intrusi, record_orfani):
                 "icona": "🧹",
                 "testo": f"Spostati in quarantena: {spostati} file. Restano in data/quarantena, non indicizzati.",
             }
+            _scansione_integrita.clear()
             st.rerun()
 
     # Il pulsante dipende dal contenuto della cartella, non dalla notifica: così Streamlit
@@ -696,6 +732,7 @@ def pannello_integrita(file_intrusi, record_orfani):
                     "frame e volti associati."
                 ),
             }
+            _scansione_integrita.clear()
             st.rerun()
 
 def applica_filtri(elemento, dizionario_filtri):
@@ -787,8 +824,9 @@ def aggiorna_selezione_da_checkbox(id_media):
 
 
 def richiedi_conferma_eliminazione(ids):
+    # Usata come on_click: lo stato è già aggiornato quando il rerun del click
+    # esegue lo script, che apre il dialog. Niente st.rerun (vietato nei callback).
     st.session_state["eliminazione_da_confermare"] = sorted(set(int(i) for i in ids))
-    st.rerun()
 
 
 @st.dialog("Conferma eliminazione")
@@ -829,6 +867,7 @@ def dialogo_conferma_eliminazione():
             "eliminati": len(eliminati),
             "errori": len(errori),
         }
+        _scansione_integrita.clear()
         st.rerun()
 
 
@@ -855,8 +894,8 @@ def prepara_zip_galleria(ids):
 
 
 def vai_a_pagina_galleria(pagina):
+    # Usata come on_click dei pulsanti del paginatore: un solo rerun per click.
     st.session_state["gal_pagina_corrente"] = int(pagina)
-    st.rerun()
 
 
 def mostra_paginatore_galleria(
@@ -888,11 +927,11 @@ def mostra_paginatore_galleria(
     pagine = gallery_utils.pagine_compatte(pagina_corrente, totale_pagine)
     larghezze = [1.35] + [0.55] * len(pagine) + [1.35]
     colonne = st.columns(larghezze)
-    if colonne[0].button(
+    colonne[0].button(
         "← Precedente", key="gal_pag_precedente", width="stretch",
         disabled=pagina_corrente <= 1,
-    ):
-        vai_a_pagina_galleria(pagina_corrente - 1)
+        on_click=vai_a_pagina_galleria, args=(pagina_corrente - 1,),
+    )
 
     for indice, pagina in enumerate(pagine, start=1):
         if pagina is None:
@@ -901,20 +940,20 @@ def mostra_paginatore_galleria(
                 unsafe_allow_html=True,
             )
             continue
-        if colonne[indice].button(
+        colonne[indice].button(
             str(pagina),
             key=f"gal_pag_num_{pagina}",
             type="primary" if pagina == pagina_corrente else "secondary",
             disabled=pagina == pagina_corrente,
             width="stretch",
-        ):
-            vai_a_pagina_galleria(pagina)
+            on_click=vai_a_pagina_galleria, args=(pagina,),
+        )
 
-    if colonne[-1].button(
+    colonne[-1].button(
         "Successiva →", key="gal_pag_successiva", width="stretch",
         disabled=pagina_corrente >= totale_pagine,
-    ):
-        vai_a_pagina_galleria(pagina_corrente + 1)
+        on_click=vai_a_pagina_galleria, args=(pagina_corrente + 1,),
+    )
 
 
 # (I filtri di ricerca sono stati spostati nella pagina "Ricerca Avanzata".)
@@ -973,10 +1012,14 @@ if gestore.dispositivo == "cuda" and st.sidebar.button("Libera Memoria GPU", key
 if "selezione_menu" not in st.session_state:
     st.session_state.selezione_menu = "📊 Dashboard"
 
-# Scansioni di integrità: servono sia al badge dello scudo sia al pannello del popover,
-# quindi si calcolano una volta sola per rerun e si passano al pannello.
-file_intrusi = processor.trova_file_intrusi()
-record_orfani = processor.trova_record_orfani()
+# Scansioni di integrità: servono sia al badge dello scudo sia al pannello del popover.
+# Cache con TTL: listdir + SELECT completo + exists() per riga a OGNI rerun crescono
+# linearmente con l'archivio. Le azioni che cambiano lo stato chiamano .clear().
+@st.cache_data(ttl=30, show_spinner=False)
+def _scansione_integrita():
+    return processor.trova_file_intrusi(), processor.trova_record_orfani()
+
+file_intrusi, record_orfani = _scansione_integrita()
 n_problemi = len(file_intrusi) + len(record_orfani)
 
 # Esito dell'ultima azione, emesso qui e non dentro il popover: st.rerun() scarta i messaggi
@@ -1004,11 +1047,17 @@ voci_navbar = [
     ("🔍 Ricerca Avanzata", "nav_search", col_nav3),
     ("👤 Persone", "nav_persone", col_nav4),
 ]
+# on_click (non if button + st.rerun): il callback aggiorna lo stato PRIMA del rerun
+# innescato dal click, quindi basta UNA esecuzione dello script per cambiare pagina
+# con l'evidenziazione già corretta. Con st.rerun() ogni click ne costava due.
+def _vai_a_pagina(etichetta):
+    st.session_state.selezione_menu = etichetta
+
 for etichetta, key, colonna in voci_navbar:
     attivo = st.session_state.selezione_menu == etichetta
-    if colonna.button(etichetta, width='stretch', key=key, type="primary" if attivo else "secondary"):
-        st.session_state.selezione_menu = etichetta
-        st.rerun()
+    colonna.button(etichetta, width='stretch', key=key,
+                   type="primary" if attivo else "secondary",
+                   on_click=_vai_a_pagina, args=(etichetta,))
 
 # Scudo: apre il controllo integrità in un pannello a comparsa. Il badge mostra quanti
 # problemi sono stati rilevati (file intrusi + record orfani).
@@ -1022,17 +1071,17 @@ with col_nav5:
 
 # --- PULSANTE FLOTTANTE "+" (in basso a destra, visibile su ogni pagina) ---
 # Apre le opzioni di caricamento: la pagina Caricamento non è più nella navbar.
+def _apri_caricamento(modalita):
+    st.session_state.selezione_menu = "📤 Caricamento & Import"
+    st.session_state.modalita_caricamento = modalita
+
 with st.container(key="fab_caricamento"):
     with st.popover("➕"):
         st.markdown("**Aggiungi contenuti**")
-        if st.button("📤 Carica file", key="fab_upload_file", width='stretch'):
-            st.session_state.selezione_menu = "📤 Caricamento & Import"
-            st.session_state.modalita_caricamento = "file"
-            st.rerun()
-        if st.button("📂 Scansiona cartella", key="fab_scan_cartella", width='stretch'):
-            st.session_state.selezione_menu = "📤 Caricamento & Import"
-            st.session_state.modalita_caricamento = "cartella"
-            st.rerun()
+        st.button("📤 Carica file", key="fab_upload_file", width='stretch',
+                  on_click=_apri_caricamento, args=("file",))
+        st.button("📂 Scansiona cartella", key="fab_scan_cartella", width='stretch',
+                  on_click=_apri_caricamento, args=("cartella",))
 
 st.markdown("<hr style='margin-top: 0.5rem; margin-bottom: 2rem; border-color: var(--bordo);'>", unsafe_allow_html=True)
 
@@ -1204,15 +1253,16 @@ elif menu == "🖼️ Galleria":
         st.markdown(testo_selezione)
 
         col_sel1, col_sel2, col_sel3, col_zip, col_del = st.columns([1, 1, 1, 1, 1])
-        if col_sel1.button("Seleziona pagina", width="stretch", disabled=not elementi_visibili):
-            salva_selezione_galleria(selezionati | ids_visibili, aggiorna_checkbox=True)
-            st.rerun()
-        if col_sel2.button("Deseleziona pagina", width="stretch", disabled=not n_visibili_selezionati):
-            salva_selezione_galleria(selezionati - ids_visibili, aggiorna_checkbox=True)
-            st.rerun()
-        if col_sel3.button("Svuota selezione", width="stretch", disabled=not selezionati):
-            salva_selezione_galleria([], aggiorna_checkbox=True)
-            st.rerun()
+        # on_click: un solo rerun per click (vedi navbar). Gli args sono calcolati
+        # in questo run, il callback li applica prima del rerun del click.
+        col_sel1.button("Seleziona pagina", width="stretch", disabled=not elementi_visibili,
+                        on_click=salva_selezione_galleria,
+                        args=(selezionati | ids_visibili, True))
+        col_sel2.button("Deseleziona pagina", width="stretch", disabled=not n_visibili_selezionati,
+                        on_click=salva_selezione_galleria,
+                        args=(selezionati - ids_visibili, True))
+        col_sel3.button("Svuota selezione", width="stretch", disabled=not selezionati,
+                        on_click=salva_selezione_galleria, args=([], True))
         if col_zip.button("Prepara ZIP", width="stretch", disabled=not selezionati):
             with st.spinner("Creazione dello ZIP degli originali..."):
                 try:
@@ -1223,8 +1273,9 @@ elif menu == "🖼️ Galleria":
                         st.warning(f"{len(mancanti)} originali non sono stati trovati e sono stati esclusi.")
                 except Exception as errore:
                     st.error(f"Impossibile creare lo ZIP: {errore}")
-        if col_del.button("Elimina selezionati", type="primary", width="stretch", disabled=not selezionati):
-            richiedi_conferma_eliminazione(selezionati)
+        col_del.button("Elimina selezionati", type="primary", width="stretch",
+                       disabled=not selezionati,
+                       on_click=richiedi_conferma_eliminazione, args=(selezionati,))
 
         percorso_zip = st.session_state.get("galleria_zip_path")
         if percorso_zip and os.path.exists(percorso_zip):
@@ -1282,17 +1333,12 @@ elif menu == "🖼️ Galleria":
                                 mostra_player_video(elemento["file_path"])
 
                             if os.path.exists(elemento["file_path"]):
-                                with open(elemento["file_path"], "rb") as dati_file:
-                                    st.download_button(
-                                        label="⬇️ Scarica File Originale",
-                                        data=dati_file,
-                                        file_name=elemento["filename"],
-                                        mime="application/octet-stream",
-                                        key=f"gal_dl_{elemento['id']}"
-                                    )
+                                bottone_scarica(elemento["file_path"], elemento["filename"],
+                                                f"gal_dl_{elemento['id']}")
 
-                            if st.button("🗑️ Elimina dall'Archivio", key=f"gal_del_{elemento['id']}"):
-                                richiedi_conferma_eliminazione([elemento["id"]])
+                            st.button("🗑️ Elimina dall'Archivio", key=f"gal_del_{elemento['id']}",
+                                      on_click=richiedi_conferma_eliminazione,
+                                      args=([elemento["id"]],))
 
             # Ultimo blocco della pagina: nessun controllo di paginazione compare in cima.
             mostra_paginatore_galleria(
@@ -1408,17 +1454,16 @@ elif menu == "👤 Persone":
                         </div></div>""", unsafe_allow_html=True)
                         if p["crop_path"] and os.path.exists(p["crop_path"]):
                             st.image(p["crop_path"], width="stretch")
-                        if st.button("Apri", key=f"apri_persona_{p['id']}", width='stretch'):
-                            st.session_state["persona_selezionata"] = p["id"]
-                            st.rerun()
+                        st.button("Apri", key=f"apri_persona_{p['id']}", width='stretch',
+                                  on_click=lambda i=p["id"]: st.session_state.update(
+                                      persona_selezionata=i))
         else:
             persona = next((p for p in lista_persone if p["id"] == id_selezionata), None)
             if persona is None:
                 st.session_state.pop("persona_selezionata", None)
                 st.rerun()
-            if st.button("← Tutte le persone", key="btn_indietro_persone"):
-                st.session_state.pop("persona_selezionata", None)
-                st.rerun()
+            st.button("← Tutte le persone", key="btn_indietro_persone",
+                      on_click=lambda: st.session_state.pop("persona_selezionata", None))
 
             col_p1, col_p2 = st.columns([1, 2])
             with col_p1:
@@ -1459,11 +1504,8 @@ elif menu == "👤 Persone":
                             if anteprima:
                                 st.image(anteprima, width="stretch")
                         if os.path.exists(elemento["file_path"]):
-                            with open(elemento["file_path"], "rb") as dati_file:
-                                st.download_button("⬇️ Scarica", data=dati_file,
-                                                   file_name=elemento["filename"],
-                                                   mime="application/octet-stream",
-                                                   key=f"persona_dl_{persona['id']}_{elemento['id']}")
+                            bottone_scarica(elemento["file_path"], elemento["filename"],
+                                            f"persona_dl_{persona['id']}_{elemento['id']}")
 
 
 # --- 4. SCHEDA RICERCA AVANZATA ---
@@ -1477,10 +1519,8 @@ elif menu == "🔍 Ricerca Avanzata":
             "L'archivio è vuoto. Carica almeno una foto, un video o una GIF "
             "prima di eseguire una ricerca."
         )
-        if st.button("📤 Vai al caricamento", key="ricerca_vuota_carica", type="primary"):
-            st.session_state.selezione_menu = "📤 Caricamento & Import"
-            st.session_state.modalita_caricamento = "file"
-            st.rerun()
+        st.button("📤 Vai al caricamento", key="ricerca_vuota_carica", type="primary",
+                  on_click=_apri_caricamento, args=("file",))
         # Non inizializzare Qwen né interrogare Chroma quando non esistono contenuti.
         st.stop()
 
@@ -1534,14 +1574,20 @@ elif menu == "🔍 Ricerca Avanzata":
         if usa_negativo:
             testo_negativo = st.text_input("Cosa NON deve comparire (es: 'persone', 'neve')", "", key="txt_negativo")
 
+        # Cache dell'embedding: con una query attiva OGNI rerun (Mostra altri, Elimina,
+        # expander) rifarebbe la chiamata HTTP a llama-server. Le eccezioni non vengono
+        # cachate: se il server non è pronto, il rerun successivo riprova.
+        @st.cache_data(max_entries=64, show_spinner=False)
+        def _embedding_query(testo):
+            return gestore.ottieni_qwen().ottieni_embedding_testo(testo)
+
         if testo_query:
             with st.spinner("Calcolo embedding della query e ricerca vettoriale..."):
                 try:
-                    qwen = gestore.ottieni_qwen()
-                    query_emb = qwen.ottieni_embedding_testo(testo_query)
+                    query_emb = _embedding_query(testo_query)
                     emb_negativo = None
                     if usa_negativo and testo_negativo.strip():
-                        emb_negativo = qwen.ottieni_embedding_testo(testo_negativo.strip())
+                        emb_negativo = _embedding_query(testo_negativo.strip())
 
                     # Nessuna soglia: si mostrano sempre i migliori per rilevanza
                     # (top-5 + "Mostra altri"), cosi' una query non resta mai a vuoto.
@@ -1600,13 +1646,17 @@ elif menu == "🔍 Ricerca Avanzata":
         file_volto_query = st.file_uploader("Carica una foto contenente il volto da cercare", type=["jpg", "jpeg", "png"], key="face_sim")
         
         if file_volto_query:
-            immagine_pil_volto_query = ImageOps.exif_transpose(Image.open(file_volto_query)).convert("RGB")
-            
-            # Esegue il rilevamento dei volti sull'immagine caricata
-            with st.spinner("Rilevamento volti nell'immagine caricata..."):
-                face_rec = gestore.ottieni_volti()
-                volti_rilevati = face_rec.rileva_e_codifica_volti(immagine_pil_volto_query)
-                
+            # MTCNN+FaceNet solo quando cambia il file caricato: senza questa cache
+            # OGNI rerun (expander, Elimina, ...) rifarebbe il rilevamento completo.
+            id_file_volto = getattr(file_volto_query, "file_id", None) or file_volto_query.name
+            if st.session_state.get("volti_rilevati_per") != id_file_volto:
+                immagine_pil_volto_query = ImageOps.exif_transpose(Image.open(file_volto_query)).convert("RGB")
+                with st.spinner("Rilevamento volti nell'immagine caricata..."):
+                    face_rec = gestore.ottieni_volti()
+                    st.session_state["volti_rilevati"] = face_rec.rileva_e_codifica_volti(immagine_pil_volto_query)
+                    st.session_state["volti_rilevati_per"] = id_file_volto
+            volti_rilevati = st.session_state["volti_rilevati"]
+
             if not volti_rilevati:
                 st.warning("Nessun volto rilevato nell'immagine fornita. Assicurati che il volto sia ben visibile e illuminato.")
             else:
@@ -1629,7 +1679,6 @@ elif menu == "🔍 Ricerca Avanzata":
                 else:
                     contenitore_volti.image(volti_rilevati[0]["crop"], caption="Volto rilevato", width=120)
                     
-                id_file_volto = getattr(file_volto_query, "file_id", None) or file_volto_query.name
                 # Come per la ricerca immagine: al click si memorizza l'embedding del volto
                 # scelto; la ricerca viene poi rieseguita a ogni rerun finché è caricata la
                 # stessa foto, così i risultati restano e il pulsante "Elimina" funziona.
@@ -1792,24 +1841,19 @@ elif menu == "🔍 Ricerca Avanzata":
                         
                     # Bottone per scaricare il file originale
                     if os.path.exists(elemento["file_path"]):
-                        with open(elemento["file_path"], "rb") as dati_file:
-                            st.download_button(
-                                label="⬇️ Scarica File Originale",
-                                data=dati_file,
-                                file_name=elemento["filename"],
-                                mime="application/octet-stream",
-                                key=f"dl_{elemento['media_id']}_{idx}"
-                            )
+                        bottone_scarica(elemento["file_path"], elemento["filename"],
+                                        f"dl_{elemento['media_id']}_{idx}")
                             
                     # Bottone per eliminare l'elemento dall'archivio
-                    if st.button("🗑️ Elimina dall'Archivio", key=f"del_{elemento['media_id']}_{idx}"):
-                        richiedi_conferma_eliminazione([elemento["media_id"]])
+                    st.button("🗑️ Elimina dall'Archivio", key=f"del_{elemento['media_id']}_{idx}",
+                              on_click=richiedi_conferma_eliminazione,
+                              args=([elemento["media_id"]],))
 
         if len(risultati) > n_mostrati:
-            if st.button(f"➕ Mostra altri ({len(risultati) - n_mostrati} rimanenti)",
-                         key="btn_mostra_altri", width='stretch'):
-                st.session_state["n_risultati_mostrati"] = n_mostrati + 10
-                st.rerun()
+            st.button(f"➕ Mostra altri ({len(risultati) - n_mostrati} rimanenti)",
+                      key="btn_mostra_altri", width='stretch',
+                      on_click=lambda n=n_mostrati: st.session_state.update(
+                          n_risultati_mostrati=n + 10))
     else:
         if any([testo_query, file_immagine_query, file_volto_query, parola_chiave]):
             st.warning("Nessun risultato trovato corrispondente ai criteri di ricerca ed ai filtri inseriti.")
