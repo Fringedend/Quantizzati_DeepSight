@@ -41,8 +41,13 @@ QWEN_THREADS = max(1, (os.cpu_count() or 2) - 1)
 # di llama-server lo ignora comunque, e se l'avvio GPU fallisce si ripiega su CPU.
 QWEN_NGL = 99
 DIM_EMBEDDING_QWEN = 2048  # 2B = 2048-d; NON mescolare con modelli di dimensione diversa
-# Istruzione di retrieval per le QUERY testuali (i documenti/immagini NON ricevono istruzione)
-ISTRUZIONE_RICERCA = "Retrieve images or text relevant to the user's query."
+# Istruzione di retrieval per le QUERY testuali (i documenti/immagini NON ricevono istruzione).
+# IN ITALIANO di proposito: la lingua dell'istruzione dice al modello in che lingua
+# aspettarsi la query. Con l'istruzione in inglese "Cane" veniva letto come la parola
+# inglese cane (bastone) e non trovava nessun cane; misurato sul benchmark in
+# "model testing", l'istruzione italiana sistema le query italiane di una sola parola
+# senza peggiorare quelle in inglese ("a dog" resta perfetta).
+ISTRUZIONE_RICERCA = "Recupera le immagini pertinenti alla query dell'utente."
 
 # Prompt negativo: punteggio finale = cos(query, img) - LAMBDA * cos(negativo, img)
 LAMBDA_PROMPT_NEGATIVO = 0.5

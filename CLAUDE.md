@@ -85,6 +85,10 @@ for zero-shot tags is still a CLIP-era placeholder; measure with `src/calibra_so
 The text-search tab also supports an optional negative prompt: the UI embeds a second
 "must not contain" phrase and the final score becomes
 `cos(query, frame) - config.LAMBDA_PROMPT_NEGATIVO * cos(negative, frame)`.
+`config.ISTRUZIONE_RICERCA` (the query-side retrieval instruction) is **deliberately in
+Italian**: the instruction's language tells the model which language to expect the query
+in — with an English instruction, the one-word query "Cane" embedded as English *cane*
+(walking stick) and retrieved no dogs. Don't translate it back to English.
 
 **Two separate Chroma collections (`qwen_frames`, `faces`) are mandatory, not cosmetic.**
 `media_frames.id` and `faces.id` are independent AUTOINCREMENT sequences, so frame 1
