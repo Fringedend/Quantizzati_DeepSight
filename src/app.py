@@ -1682,7 +1682,7 @@ elif menu == "🔍 Ricerca Avanzata":
     with sotto_scheda1:
         st.markdown("#### Ricerca per concetto testuale")
         testo_query = st.text_input("Inserisci cosa stai cercando (es: 'una spiaggia al tramonto', 'strada con auto', 'cane che corre')", "")
-        usa_negativo = st.toggle("Prompt negativo (escludi elementi)", key="tgl_negativo")
+        usa_negativo = st.toggle("Escludi Elementi", key="tgl_negativo")
         testo_negativo = ""
         if usa_negativo:
             testo_negativo = st.text_input("Cosa NON deve comparire (es: 'persone', 'neve')", "", key="txt_negativo")
