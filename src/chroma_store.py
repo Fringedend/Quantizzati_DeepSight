@@ -2,6 +2,7 @@ import os
 import numpy as np
 import chromadb
 from typing import List, Dict, Any
+import config
 
 
 # Un solo PersistentClient per cartella, riusato se la stessa cartella viene richiesta più volte.
@@ -35,7 +36,7 @@ class ChromaStore:
         # isolato: aggira il baco di interferenza HNSW tra collezioni di ChromaDB 1.5.x
         # (vedi nota su _cache_client). Questo file vive in .\src\, quindi si risale di
         # un livello per tenere chroma_db nella cartella radice del progetto.
-        percorso_db = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db", nome_collezione)
+        percorso_db = os.path.join(config.DIR_CHROMA, nome_collezione)
         os.makedirs(percorso_db, exist_ok=True)
         self.client = _ottieni_client(percorso_db)
 
@@ -76,3 +77,8 @@ class ChromaStore:
     def conteggio(self) -> int:
         """Restituisce il numero di vettori presenti nella collezione."""
         return self.collezione.count()
+
+    def elenca_id(self) -> List[int]:
+        """Restituisce tutti gli ID, usato dagli strumenti di consistenza."""
+        risultati = self.collezione.get(include=[])
+        return [int(i) for i in risultati.get("ids", [])]

@@ -44,18 +44,18 @@ Launcher scripts live under `scripts/`, split per OS: `scripts/windows/` and
 The `.bat` files exist only because double-clicking a `.ps1` opens it in an editor;
 they invoke the `.ps1` sitting next to them.
 
-Linux/macOS: same venv + CUDA-vs-CPU-PyTorch flow, but does **not** auto-install
-Python (distros differ too much — apt/dnf/pacman) and detects the GPU via
-`nvidia-smi` only, with no WMI fallback.
+Linux support targets Ubuntu 22.04/24.04 x86-64. The default is CPU; CUDA for
+FaceNet/Whisper is explicit (`--cuda`). Qwen uses the Linux CPU llama-server.
+The installer validates OS, architecture, Python, utilities, hashes and runtime.
 
 ```bash
 ./scripts/linux/install.sh
+./scripts/linux/install.sh --cuda --prefetch-models
 ./scripts/linux/run.sh
-venv/bin/python src/test_ricerca_vettoriale.py
-venv/bin/python src/test_qwen_client.py
-venv/bin/python src/test_database.py
-venv/bin/python src/test_persone.py
-venv/bin/python src/test_models.py
+./venv/bin/python scripts/run_tests.py
+./venv/bin/python scripts/smoke_media.py
+./venv/bin/python scripts/smoke_app.py
+./venv/bin/python src/test_models.py
 ```
 
 There is no test framework. Tests are `assert`-based with an `if __name__ == "__main__"`
@@ -99,19 +99,20 @@ in — with an English instruction, the one-word query "Cane" embedded as Englis
 and face 1 share id `"1"`. A single collection would collide and silently corrupt
 retrieval (both vectors are 2048-d, so no dimension error surfaces it).
 
-**Chroma self-heals from SQLite.** `database._sincronizza_indici_vettoriali()` runs
+**Chroma self-heals from SQLite.** `database.sincronizza_indici_vettoriali()` runs
 at the end of `inizializza_db()`: if a collection is empty but SQLite has rows, it
 backfills from the BLOBs. So an existing archive stays searchable with no reimport,
-and you can delete `chroma_db/` to force a rebuild.
+and `scripts/rebuild_vector_index.py` performs a forced upsert and removes orphan IDs.
 
 **Imports are flat because Streamlit runs from `src/`.** Modules use `import config`,
 `import database` (not `src.config`). `streamlit run src\app.py` puts `src/` on the
-path. Any standalone script must run with `src/` as cwd or the imports break.
+path. Standalone scripts under `scripts/` explicitly prepend `src/` and run from root.
 
-**Paths resolve one level up from `src/`.** `config.py` and `chroma_store.py` compute
-`DIR_BASE`/`chroma_db` as `dirname(dirname(__file__))`, so `data/` and `chroma_db/`
-always land at the project root regardless of where the process starts. `config.py`
-creates all `data/` subfolders at import time.
+**Persisted paths are portable.** `path_utils.py` stores managed files as project-root
+relative POSIX strings (`data/archive/...`) and resolves them to native absolute paths
+at API boundaries. `path_migration.py` migrates legacy Windows/Linux absolute paths
+atomically with a SQLite backup. `config.py` creates data/model folders; test tooling
+may override data/Chroma roots with `DEEPSIGHT_DATA_DIR`/`DEEPSIGHT_CHROMA_DIR`.
 
 **Models are lazy singletons, but Qwen is a subprocess, not an in-process model.**
 `models.gestore` (a `GestoreModelli`) picks the device once (`config.MODALITA_DISPOSITIVO`:
@@ -121,7 +122,7 @@ first use, same as before. `gestore.ottieni_qwen()` instead lazily spawns `llama
 `models/qwen/*.gguf` on `127.0.0.1:8091`; it's stopped by `libera_memoria()` or at process
 exit (`atexit`). The sidebar's "Libera Memoria GPU" button calls `gestore.libera_memoria()`,
 which also kills the llama-server subprocess. The `-ngl` flag (GPU offload) is no longer
-hardcoded to 0: `ottieni_qwen` passes `config.QWEN_NGL` (default 99) when the detected device
+hardcoded to 0: `ottieni_qwen` passes `config.QWEN_NGL` (default 99 on Windows, 0 on Linux) when the detected device
 is `cuda`, else 0, and `GestoreQwen.__init__` retries once with `-ngl 0` if the GPU start
 fails (insufficient VRAM / incompatible CUDA driver). Actual GPU use also needs the CUDA
 build of `llama-server` — the Windows installer fetches it when it detects an NVIDIA GPU with
@@ -154,8 +155,8 @@ Dashboard's integrity panel and `processor.trova_file_intrusi` /
 ## Dependencies
 
 Both installers (`scripts/windows/install.ps1`, `scripts/linux/install.sh`) install
-`torch`/`torchvision` first from the CUDA-or-CPU wheel index (auto-detected via
-`nvidia-smi`, plus a WMI fallback on Windows), then `requirements.txt`, then
+`torch`/`torchvision` first from the CUDA-or-CPU wheel index (automatic on Windows,
+explicit `--cuda` on Linux), then `requirements.txt`, then
 `facenet-pytorch` with `--no-deps` to prevent it from pulling NumPy < 2.0. **To add a
 normal dependency, edit `requirements.txt` only** — neither script needs changes; keep
 the two in sync when the install flow itself changes. FFmpeg comes from `imageio-ffmpeg`;

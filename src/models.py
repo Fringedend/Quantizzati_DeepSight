@@ -1,9 +1,9 @@
 import os
 import threading
+import config
 import torch
 import numpy as np
 import torchvision.transforms as T
-import config
 
 # Configura il percorso di FFmpeg nell'ambiente in modo che Whisper possa trovarlo
 try:
@@ -159,7 +159,11 @@ class GestoreWhisper:
         self.dispositivo = dispositivo
         import whisper
         print(f"Caricamento del modello Whisper '{config.NOME_MODELLO_WHISPER}' su {dispositivo}...")
-        self.modello = whisper.load_model(config.NOME_MODELLO_WHISPER, device=dispositivo)
+        self.modello = whisper.load_model(
+            config.NOME_MODELLO_WHISPER,
+            device=dispositivo,
+            download_root=config.DIR_MODELLI_WHISPER,
+        )
         print("Whisper caricato con successo.")
 
     def trascrivi(self, percorso_audio):

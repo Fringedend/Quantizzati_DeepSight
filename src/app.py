@@ -12,6 +12,7 @@ import config
 import database
 import processor
 import gallery_utils
+from path_utils import risolvi_percorso
 from models import gestore
 
 # Percorso del logo blu (src/assets/logo_blu.png). Risolto da __file__ così vale
@@ -1422,7 +1423,8 @@ elif menu == "📤 Caricamento & Import":
         ### Scansione di una cartella di rete o locale
         Copia manualmente le immagini e i video in una cartella specifica. Inserisci il percorso qui sotto e l'applicazione scansionerà e indicizzerà i file non ancora elaborati.
         """)
-        percorso_cartella_condivisa = st.text_input("Percorso Cartella Condivisa (es. C:\\ArchivioCondiviso)", "")
+        percorso_cartella_condivisa = st.text_input(
+            "Percorso Cartella Condivisa (es. C:\\ArchivioCondiviso oppure /mnt/archivio)", "")
         
         if st.button("Avvia Scansione Cartella"):
             if not percorso_cartella_condivisa or not os.path.exists(percorso_cartella_condivisa):
@@ -1733,9 +1735,10 @@ elif menu == "🔍 Ricerca Avanzata":
                     # Converte le corrispondenze video
                     for r in righe_video:
                         nome_file = r[2]
+                        percorso_file = risolvi_percorso(r[1])
                         # Miniatura per nome-hash; se assente resta None (mai il file
                         # video stesso: st.image non saprebbe visualizzarlo).
-                        percorso_anteprima = percorso_anteprima_elemento(r[1])
+                        percorso_anteprima = percorso_anteprima_elemento(percorso_file)
 
                         elemento = {
                             "frame_id": None,
@@ -1745,7 +1748,7 @@ elif menu == "🔍 Ricerca Avanzata":
                             "image_path": percorso_anteprima,
                             "objects": [],
                             "filename": nome_file,
-                            "file_path": r[1],
+                            "file_path": percorso_file,
                             "media_type": r[3],
                             "creation_date": r[4],
                             "location_name": r[5] or "",

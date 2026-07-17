@@ -5,8 +5,11 @@ import os
 # dati nella cartella principale del progetto.)
 DIR_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Cartelle dei dati (relative a DIR_BASE)
-DIR_DATI = os.path.join(DIR_BASE, "data")
+# Cartelle dei dati (relative a DIR_BASE). Gli override servono a test/packaging;
+# la configurazione normale resta interamente in questo file di testo.
+DIR_DATI = os.path.abspath(os.environ.get("DEEPSIGHT_DATA_DIR", os.path.join(DIR_BASE, "data")))
+DIR_CHROMA = os.path.abspath(os.environ.get(
+    "DEEPSIGHT_CHROMA_DIR", os.path.join(DIR_BASE, "chroma_db")))
 DIR_ARCHIVIO = os.path.join(DIR_DATI, "archive")
 DIR_FRAME = os.path.join(DIR_DATI, "frames")
 DIR_VOLTI = os.path.join(DIR_DATI, "faces")
@@ -15,10 +18,6 @@ DIR_DB = os.path.join(DIR_DATI, "db")
 DIR_QUARANTENA = os.path.join(DIR_DATI, "quarantena")  # file intrusi isolati (non indicizzati)
 PERCORSO_DB = os.path.join(DIR_DB, "archive.db")
 
-# Assicura che tutte le cartelle necessarie esistano
-for cartella in [DIR_DATI, DIR_ARCHIVIO, DIR_FRAME, DIR_VOLTI, DIR_ANTEPRIME, DIR_DB, DIR_QUARANTENA]:
-    os.makedirs(cartella, exist_ok=True)
-
 # Configurazione dei modelli di Intelligenza Artificiale
 NOME_MODELLO_WHISPER = "base"  # opzioni disponibili: "tiny", "base", "small", "medium"
 
@@ -26,7 +25,13 @@ NOME_MODELLO_WHISPER = "base"  # opzioni disponibili: "tiny", "base", "small", "
 # Sostituisce CLIP (ricerca semantica, similarità, tag) ed EasyOCR (il modello "legge"
 # il testo nelle immagini a livello di embedding). Gira come sottoprocesso llama-server
 # su CPU, gestito pigramente da models.GestoreQwen.
-DIR_MODELLI = os.path.join(DIR_BASE, "models", "qwen")
+DIR_MODELLI_ROOT = os.path.join(DIR_BASE, "models")
+DIR_MODELLI = os.path.join(DIR_MODELLI_ROOT, "qwen")
+DIR_MODELLI_WHISPER = os.path.join(DIR_MODELLI_ROOT, "whisper")
+DIR_MODELLI_TORCH = os.path.join(DIR_MODELLI_ROOT, "torch")
+# facenet-pytorch usa il cache manager di Torch: lo si tiene nella cartella
+# dedicata del progetto, così installazione e backup non dipendono dall'utente OS.
+os.environ.setdefault("TORCH_HOME", DIR_MODELLI_TORCH)
 _NOME_SERVER = "llama-server.exe" if os.name == "nt" else "llama-server"
 PERCORSO_LLAMA_SERVER = os.path.join(DIR_MODELLI, _NOME_SERVER)
 PERCORSO_MODELLO_QWEN = os.path.join(DIR_MODELLI, "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf")
@@ -39,7 +44,7 @@ QWEN_THREADS = max(1, (os.cpu_count() or 2) - 1)
 # Strati Qwen offloadati sulla GPU: 99 = tutti, 0 = forza CPU. Applicato solo se il
 # dispositivo rilevato e' 'cuda' (vedi models.GestoreModelli.ottieni_qwen); la build CPU
 # di llama-server lo ignora comunque, e se l'avvio GPU fallisce si ripiega su CPU.
-QWEN_NGL = 99
+QWEN_NGL = int(os.environ.get("DEEPSIGHT_QWEN_NGL", "99" if os.name == "nt" else "0"))
 DIM_EMBEDDING_QWEN = 2048  # 2B = 2048-d; NON mescolare con modelli di dimensione diversa
 # Porta locale usata SOLO come mutex di istanza singola: la prima istanza di DeepSight
 # la occupa, una seconda fallisce il bind e capisce di essere un doppione (vedi
@@ -93,3 +98,10 @@ SOGLIA_CONFIDENZA_RILEVAMENTO_VOLTO = 0.90
 # Le vecchie soglie CLIP (adattiva testo, SOGLIA_SIMILARITA_IMMAGINE) sono state rimosse.
 
 MASSIMO_TAG_PER_IMMAGINE = 10  # Numero massimo di tag assegnati per immagine/frame
+
+# Assicura che tutte le cartelle necessarie esistano. I modelli rimangono separati
+# dai dati utente ma sempre dentro la cartella dedicata dell'applicazione.
+for cartella in [DIR_DATI, DIR_ARCHIVIO, DIR_FRAME, DIR_VOLTI, DIR_ANTEPRIME,
+                 DIR_DB, DIR_QUARANTENA, DIR_MODELLI, DIR_MODELLI_WHISPER,
+                 DIR_MODELLI_TORCH]:
+    os.makedirs(cartella, exist_ok=True)

@@ -3,9 +3,10 @@
 Da lanciare dopo una modifica a processor.CATEGORIE: riusa gli embedding
 gia' salvati in SQLite (nessuna immagine viene ri-embeddata), quindi il costo
 e' solo l'embedding una tantum delle categorie via llama-server + prodotti
-scalari. Eseguire con cwd=src:
+scalari. Eseguire dalla radice del progetto:
 
-    ..\\venv\\Scripts\\python.exe ricalcola_tag.py
+    Windows: .\\venv\\Scripts\\python.exe src\\ricalcola_tag.py
+    Linux:   ./venv/bin/python src/ricalcola_tag.py
 """
 import json
 
@@ -22,15 +23,20 @@ def main():
 
     connessione = database.ottieni_connessione()
     campione = []
-    for frame in frames:
-        tags = processor.classifica_tag(frame["embedding"])
-        # Solo la colonna dei tag: gli embedding non cambiano, Chroma non va toccata.
-        connessione.execute("UPDATE media_frames SET objects = ? WHERE id = ?",
-                            (json.dumps(tags), frame["frame_id"]))
-        if len(campione) < 5:
-            campione.append((frame["filename"], tags))
-    connessione.commit()
-    connessione.close()
+    try:
+        for frame in frames:
+            tags = processor.classifica_tag(frame["embedding"])
+            # Solo la colonna dei tag: gli embedding non cambiano, Chroma non va toccata.
+            connessione.execute("UPDATE media_frames SET objects = ? WHERE id = ?",
+                                (json.dumps(tags), frame["frame_id"]))
+            if len(campione) < 5:
+                campione.append((frame["filename"], tags))
+        connessione.commit()
+    except Exception:
+        connessione.rollback()
+        raise
+    finally:
+        connessione.close()
 
     print(f"Tag ricalcolati per {len(frames)} frame.")
     print("\nCampione (primi 5):")

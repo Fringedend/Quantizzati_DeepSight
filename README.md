@@ -42,17 +42,35 @@ Gli script di installazione e avvio sono divisi per sistema operativo dentro
 > CPU** all'avvio. Il numero di strati offloadati è regolabile con `config.QWEN_NGL`
 > (0 = forza CPU). Per cambiare build (CPU↔GPU) svuota `models/qwen/` e rilancia l'installatore.
 
-### Linux / macOS
+### Linux (Ubuntu x86-64)
 
 ```bash
 ./scripts/linux/install.sh
 ./scripts/linux/run.sh
 ```
 
-> A differenza di Windows, l'installatore **non** installa Python da solo (le
-> distribuzioni differiscono troppo): se manca, indica il comando da usare.
+Supporto verificabile previsto per Ubuntu 22.04/24.04 x86-64. L'installazione
+predefinita usa PyTorch CPU; con NVIDIA si può richiedere CUDA:
 
-> Versione Python consigliata: **3.13** (64-bit). Minimo richiesto: 3.11.
+```bash
+./scripts/linux/install.sh --cuda
+```
+
+Per scaricare già durante l'installazione anche FaceNet e Whisper (utile prima
+di portare il PC offline):
+
+```bash
+./scripts/linux/install.sh --prefetch-models
+```
+
+> L'installatore non modifica il sistema con `sudo`: se manca Python o una utility,
+> mostra il comando Ubuntu da eseguire. macOS e Linux ARM64 non sono supportati da
+> questo installer perché richiedono binari llama.cpp differenti.
+
+> Versioni Python di riferimento: **3.11 e 3.12** (64-bit). Minimo richiesto: 3.11.
+
+Installazione, migrazione Windows→Linux e problemi comuni sono descritti in
+[`docs/LINUX.md`](docs/LINUX.md).
 
 ## Mappa dei file (per chi sviluppa)
 
@@ -64,6 +82,8 @@ Tutto il codice sorgente Python vive nella cartella **`src/`**:
 | `src/config.py`        | Impostazioni centrali (modelli, soglie) e percorsi delle cartelle dati. |
 | `src/models.py`        | Caricamento e gestione dei modelli AI (Qwen3-VL via llama-server, FaceNet, Whisper) — oggetto `gestore`. |
 | `src/qwen_client.py`   | Client HTTP per il sottoprocesso `llama-server`: lo avvia/ferma e gli chiede gli embedding di testo e immagini. |
+| `src/path_utils.py`    | Salvataggio relativo e risoluzione dei percorsi portabili Windows/Linux. |
+| `src/path_migration.py`| Migrazione atomica dei vecchi percorsi assoluti con backup SQLite. |
 | `src/processor.py`     | Pipeline di elaborazione a stadi (preparazione, embedding, volti, trascrizione) — coda persistente su SQLite. |
 | `src/persone.py`       | Raggruppamento dei volti in persone (assegnazione greedy per centroide + re-cluster DBSCAN). |
 | `src/database.py`      | Persistenza dei metadati su SQLite (e sincronizzazione con ChromaDB). |
@@ -73,12 +93,16 @@ Tutto il codice sorgente Python vive nella cartella **`src/`**:
 | `src/test_qwen_client.py`, `src/test_database.py`, `src/test_persone.py`, `src/test_ricerca_vettoriale.py` | Altri auto-test (`assert`-based, si eseguono direttamente). |
 | `requirements.txt`     | Dipendenze Python di base. |
 | `scripts/windows/`     | Installazione e avvio su Windows: `install.bat` / `run.bat` (involucri) e la logica PowerShell `install.ps1` / `run.ps1`. |
-| `scripts/linux/`       | Installazione e avvio su Linux/macOS: `install.sh` / `run.sh`. |
-| `models/qwen/`         | File del modello Qwen (`llama-server` + GGUF + mmproj) — non forniti dall'installatore, vedi sopra. |
+| `scripts/linux/`       | Installazione e avvio su Ubuntu/Linux x86-64: `install.sh` / `run.sh`. |
+| `scripts/migrate_paths.py` | Anteprima/applicazione della migrazione dei percorsi (`--dry-run` / `--apply`). |
+| `scripts/rebuild_vector_index.py` | Riallinea Chroma agli embedding conservati in SQLite. |
+| `scripts/check_install.py` | Diagnostica leggera di dipendenze, cartelle, Qwen e FFmpeg. |
+| `models/`              | Modelli locali: Qwen, Whisper e cache Torch/FaceNet; creati dall'installatore o al primo uso. |
 | `data/`                | **Archivio gestito dall'app** (foto/video importati, frame, volti, anteprime, DB SQLite). |
 
-> Nota: `config.py` e `chroma_store.py` risalgono di un livello rispetto a `src/`,
-> quindi `data/` e `chroma_db/` restano nella cartella principale del progetto.
+> Nota: `data/`, `models/` e `chroma_db/` restano nella cartella principale del
+> progetto. I percorsi interni salvati in SQLite sono relativi alla radice, così
+> l'intero archivio può essere spostato tra Windows e Linux.
 
 ### Grafo delle dipendenze tra moduli
 

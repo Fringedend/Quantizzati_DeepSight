@@ -13,6 +13,7 @@ from PIL.ExifTags import TAGS, GPSTAGS
 
 import config
 import database
+from path_utils import risolvi_percorso
 from models import gestore
 
 # Estensioni dei file multimediali gestiti dall'applicazione
@@ -747,6 +748,7 @@ def trova_record_orfani():
 
     orfani = []
     for id_media, nome_file, percorso, tipo_media, stato in righe:
+        percorso = risolvi_percorso(percorso)
         if not percorso or not os.path.exists(percorso):
             orfani.append({
                 "id": id_media, "filename": nome_file, "file_path": percorso,

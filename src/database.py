@@ -3,6 +3,8 @@ import numpy as np
 import os
 import json
 import config
+from path_migration import migra_percorsi_database
+from path_utils import normalizza_per_confronto, percorso_da_salvare, risolvi_percorso
 
 # Inizializza i due archivi vettoriali (ChromaDB): collezioni separate perche' gli
 # id dei frame e dei volti sono sequenze AUTOINCREMENT distinte e colliderebbero.
@@ -111,8 +113,14 @@ def inizializza_db():
 
     connessione.commit()
     _migra_schema_v07(connessione)
+    esito_percorsi = migra_percorsi_database(connessione)
+    if esito_percorsi["aggiornati"]:
+        print(f"Migrazione percorsi: {esito_percorsi['aggiornati']} valori resi portabili.")
+    if esito_percorsi["irrisolti"]:
+        print(f"Attenzione: {esito_percorsi['irrisolti']} percorsi esterni richiedono "
+              "verifica con scripts/migrate_paths.py.")
     connessione.close()
-    _sincronizza_indici_vettoriali()
+    sincronizza_indici_vettoriali()
 
 def _migra_schema_v07(connessione):
     """Migrazione v0.7: colonne di stadio su media_items, person_id sui volti,
@@ -187,7 +195,7 @@ def crea_frame(id_media, indice_frame, secondi_timestamp, percorso_immagine):
     cursore.execute("""
     INSERT INTO media_frames (media_id, frame_index, timestamp_seconds, image_path, ocr_text, objects, clip_embedding)
     VALUES (?, ?, ?, ?, '', '[]', NULL)
-    """, (id_media, indice_frame, secondi_timestamp, percorso_immagine))
+    """, (id_media, indice_frame, secondi_timestamp, percorso_da_salvare(percorso_immagine)))
     id_frame = cursore.lastrowid
     connessione.commit()
     connessione.close()
@@ -212,7 +220,8 @@ def ottieni_frame_di_media(id_media):
         "SELECT id, image_path, clip_embedding IS NOT NULL FROM media_frames "
         "WHERE media_id = ? ORDER BY frame_index", (id_media,)).fetchall()
     connessione.close()
-    return [{"id": r[0], "image_path": r[1], "clip_embedding_presente": bool(r[2])} for r in righe]
+    return [{"id": r[0], "image_path": risolvi_percorso(r[1]),
+             "clip_embedding_presente": bool(r[2])} for r in righe]
 
 def imposta_stato_stadio(id_media, colonna, valore):
     assert colonna in ("stato_embedding", "stato_volti", "stato_trascrizione"), colonna
@@ -235,7 +244,7 @@ def prossimo_media_in_coda():
         riga = cursore.fetchone()
     colonne = [c[0] for c in cursore.description] if riga else []
     connessione.close()
-    return dict(zip(colonne, riga)) if riga else None
+    return _riga_media_a_dict(colonne, riga) if riga else None
 
 def conteggio_coda():
     connessione = ottieni_connessione()
@@ -273,6 +282,7 @@ def elimina_volti_di_media(id_media):
         except Exception as errore:
             print(f"Errore rimozione vettori volto per media {id_media}: {errore}")
     for _, percorso in righe:
+        percorso = risolvi_percorso(percorso)
         if percorso and os.path.exists(percorso):
             try:
                 os.remove(percorso)
@@ -335,7 +345,8 @@ def ottieni_persone():
     """)
     righe = cursore.fetchall()
     connessione.close()
-    return [{"id": r[0], "name": r[1], "n_volti": r[2], "n_media": r[3], "crop_path": r[4]}
+    return [{"id": r[0], "name": r[1], "n_volti": r[2], "n_media": r[3],
+             "crop_path": risolvi_percorso(r[4])}
             for r in righe]
 
 def ottieni_media_di_persona(id_persona):
@@ -348,7 +359,7 @@ def ottieni_media_di_persona(id_persona):
     righe = cursore.fetchall()
     colonne = [c[0] for c in cursore.description]
     connessione.close()
-    return [dict(zip(colonne, r)) for r in righe]
+    return [_riga_media_a_dict(colonne, r) for r in righe]
 
 def rinomina_persona(id_persona, nome):
     connessione = ottieni_connessione()
@@ -384,6 +395,14 @@ def deserializza_vettore(blob_dati):
         return None
     return np.frombuffer(blob_dati, dtype=np.float32).copy()
 
+
+def _riga_media_a_dict(colonne, riga):
+    """Converte una riga media e risolve il percorso portabile per i chiamanti."""
+    elemento = dict(zip(colonne, riga))
+    if "file_path" in elemento:
+        elemento["file_path"] = risolvi_percorso(elemento["file_path"])
+    return elemento
+
 def aggiungi_elemento_multimediale(percorso_file, nome_file, tipo_media, dimensione_file, hash_file, 
                                    data_creazione=None, latitudine=None, longitudine=None, 
                                    nome_localita=None, larghezza=None, altezza=None, durata=None):
@@ -395,7 +414,9 @@ def aggiungi_elemento_multimediale(percorso_file, nome_file, tipo_media, dimensi
         INSERT INTO media_items 
         (file_path, filename, media_type, file_size, file_hash, creation_date, location_lat, location_lon, location_name, width, height, duration, processed)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        """, (percorso_file, nome_file, tipo_media, dimensione_file, hash_file, data_creazione, latitudine, longitudine, nome_localita, larghezza, altezza, durata))
+        """, (percorso_da_salvare(percorso_file), nome_file, tipo_media, dimensione_file,
+              hash_file, data_creazione, latitudine, longitudine, nome_localita,
+              larghezza, altezza, durata))
         id_media = cursore.lastrowid
         connessione.commit()
         return id_media
@@ -449,7 +470,8 @@ def aggiungi_volto(id_media, id_frame, percorso_ritaglio, embedding, riquadro):
     cursore.execute("""
     INSERT INTO faces (media_id, frame_id, crop_path, embedding, box_x1, box_y1, box_x2, box_y2)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (id_media, id_frame, percorso_ritaglio, blob_embedding, x1, y1, x2, y2))
+    """, (id_media, id_frame, percorso_da_salvare(percorso_ritaglio),
+          blob_embedding, x1, y1, x2, y2))
     id_volto = cursore.lastrowid
     
     # Indicizza il vettore FaceNet nella collezione dei volti
@@ -473,7 +495,7 @@ def ottieni_elemento_multimediale(id_media):
     connessione.close()
     if riga:
         colonne = [col[0] for col in cursore.description]
-        return dict(zip(colonne, riga))
+        return _riga_media_a_dict(colonne, riga)
     return None
 
 def ottieni_tutti_elementi_multimediali(solo_elaborati=True):
@@ -488,7 +510,7 @@ def ottieni_tutti_elementi_multimediali(solo_elaborati=True):
     connessione.close()
     
     colonne = [col[0] for col in cursore.description]
-    return [dict(zip(colonne, r)) for r in righe]
+    return [_riga_media_a_dict(colonne, r) for r in righe]
 
 def ottieni_elementi_multimediali(id_media_lista):
     """Recupera più elementi preservando l'ordine degli ID richiesti."""
@@ -502,7 +524,7 @@ def ottieni_elementi_multimediali(id_media_lista):
     righe = cursore.fetchall()
     colonne = [col[0] for col in cursore.description]
     connessione.close()
-    per_id = {r[0]: dict(zip(colonne, r)) for r in righe}
+    per_id = {r[0]: _riga_media_a_dict(colonne, r) for r in righe}
     return [per_id[i] for i in ids if i in per_id]
 
 def conteggio_media_cercabili():
@@ -534,7 +556,7 @@ def ottieni_percorsi_archiviati():
     percorsi = set()
     for (percorso,) in righe:
         if percorso:
-            percorsi.add(os.path.normcase(os.path.abspath(percorso)))
+            percorsi.add(normalizza_per_confronto(percorso))
     return percorsi
 
 def elimina_elemento_multimediale(id_media):
@@ -550,12 +572,12 @@ def elimina_elemento_multimediale(id_media):
     
     # 2. Raccoglie i percorsi dei file su disco per la pulizia successiva
     cursore.execute("SELECT image_path FROM media_frames WHERE media_id = ?", (id_media,))
-    percorsi_frame = [r[0] for r in cursore.fetchall()]
+    percorsi_frame = [risolvi_percorso(r[0]) for r in cursore.fetchall()]
     cursore.execute("SELECT crop_path FROM faces WHERE media_id = ?", (id_media,))
-    percorsi_volti = [r[0] for r in cursore.fetchall()]
+    percorsi_volti = [risolvi_percorso(r[0]) for r in cursore.fetchall()]
     cursore.execute("SELECT file_path FROM media_items WHERE id = ?", (id_media,))
     riga_originale = cursore.fetchone()
-    percorso_originale = riga_originale[0] if riga_originale else None
+    percorso_originale = risolvi_percorso(riga_originale[0]) if riga_originale else None
     
     # 3. Elimina i record dal database (l'eliminazione a cascata cancella frame e volti correlati)
     cursore.execute("DELETE FROM media_items WHERE id = ?", (id_media,))
@@ -595,8 +617,8 @@ def elimina_elemento_multimediale(id_media):
 
         # Rimuove comunque l'eventuale miniatura associata
         try:
-            percorso_anteprima = percorso_originale.replace(config.DIR_ARCHIVIO, config.DIR_ANTEPRIME)
-            anteprima_base, _ = os.path.splitext(percorso_anteprima)
+            nome_base = os.path.splitext(os.path.basename(percorso_originale))[0]
+            anteprima_base = os.path.join(config.DIR_ANTEPRIME, nome_base)
             for estensione in ['.jpg', '.png']:
                 file_da_rimuovere = anteprima_base + estensione
                 if os.path.exists(file_da_rimuovere):
@@ -694,8 +716,8 @@ def _riga_frame_a_dict(r):
             lista_oggetti = [x.strip() for x in r[6].split(",") if x.strip()]
     return {
         "frame_id": r[0], "media_id": r[1], "frame_index": r[2],
-        "timestamp_seconds": r[3], "image_path": r[4], "ocr_text": r[5] or "",
-        "objects": lista_oggetti, "filename": r[8], "file_path": r[9],
+        "timestamp_seconds": r[3], "image_path": risolvi_percorso(r[4]), "ocr_text": r[5] or "",
+        "objects": lista_oggetti, "filename": r[8], "file_path": risolvi_percorso(r[9]),
         "media_type": r[10], "creation_date": r[11], "location_name": r[12] or "",
         "embedding": emb,
     }
@@ -760,8 +782,10 @@ def _riga_volto_a_dict(r):
     if emb is None:
         return None
     return {
-        "face_id": r[0], "media_id": r[1], "frame_id": r[2], "crop_path": r[3],
-        "bbox": [r[5], r[6], r[7], r[8]], "filename": r[9], "file_path": r[10],
+        "face_id": r[0], "media_id": r[1], "frame_id": r[2],
+        "crop_path": risolvi_percorso(r[3]),
+        "bbox": [r[5], r[6], r[7], r[8]], "filename": r[9],
+        "file_path": risolvi_percorso(r[10]),
         "media_type": r[11], "creation_date": r[12], "location_name": r[13] or "",
         "timestamp_seconds": r[14] if r[14] is not None else 0.0, "embedding": emb,
     }
@@ -804,15 +828,16 @@ def cerca_volti_simili(query_emb, k=100):
             risultati.append((d, float(np.dot(query_emb, d["embedding"]))))
     return risultati
 
-def _sincronizza_indici_vettoriali():
-    """Popola le collezioni Chroma dai BLOB in SQLite quando sono vuote.
+def sincronizza_indici_vettoriali(forza=False):
+    """Allinea Chroma ai BLOB in SQLite e ritorna i conteggi finali.
 
-    SQLite resta la fonte di verità; Chroma è solo l'indice di ricerca. Al primo
-    avvio dopo aver separato frame e volti in due collezioni, le riempie dai dati
-    già presenti così l'archivio esistente resta cercabile senza reimport.
+    SQLite resta la fonte di verità e Chroma è ricostruibile. Al normale avvio
+    si popolano solo collezioni vuote; con ``forza=True`` si esegue un upsert
+    completo e si eliminano da Chroma gli ID non più presenti in SQLite.
     """
+    esito = {"frame": None, "volti": None, "rimossi_frame": 0, "rimossi_volti": 0}
     try:
-        if _store_frame is not None and _store_frame.conteggio() == 0:
+        if _store_frame is not None and (forza or _store_frame.conteggio() == 0):
             frames = carica_tutti_embedding_clip()
             if frames:
                 _store_frame.aggiungi_o_aggiorna(
@@ -820,7 +845,14 @@ def _sincronizza_indici_vettoriali():
                     [d["embedding"] for d in frames],
                     [{"media_id": d["media_id"]} for d in frames],
                 )
-        if _store_volti is not None and _store_volti.conteggio() == 0:
+            if forza:
+                validi = {d["frame_id"] for d in frames}
+                orfani = set(_store_frame.elenca_id()) - validi
+                _store_frame.elimina(list(orfani))
+                esito["rimossi_frame"] = len(orfani)
+            esito["frame"] = _store_frame.conteggio()
+
+        if _store_volti is not None and (forza or _store_volti.conteggio() == 0):
             volti = carica_tutti_embedding_volti()
             if volti:
                 _store_volti.aggiungi_o_aggiorna(
@@ -828,5 +860,13 @@ def _sincronizza_indici_vettoriali():
                     [d["embedding"] for d in volti],
                     [{"media_id": d["media_id"]} for d in volti],
                 )
+            if forza:
+                validi = {d["face_id"] for d in volti}
+                orfani = set(_store_volti.elenca_id()) - validi
+                _store_volti.elimina(list(orfani))
+                esito["rimossi_volti"] = len(orfani)
+            esito["volti"] = _store_volti.conteggio()
     except Exception as errore:
         print(f"Sincronizzazione indici vettoriali fallita: {errore}")
+        esito["errore"] = str(errore)
+    return esito

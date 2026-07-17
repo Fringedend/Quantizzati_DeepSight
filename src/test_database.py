@@ -19,8 +19,15 @@ def esegui_test():
     assert database.leggi_impostazione("coda_in_pausa") == "1"
 
     # media + frame senza embedding, poi aggiornato
-    id_media = database.aggiungi_elemento_multimediale("/tmp/x.jpg", "x.jpg", "image", 1, "hash1")
-    id_frame = database.crea_frame(id_media, 0, 0.0, "/tmp/x.jpg")
+    percorso_gestito = os.path.join(config.DIR_ARCHIVIO, "x.jpg")
+    id_media = database.aggiungi_elemento_multimediale(
+        percorso_gestito, "x.jpg", "image", 1, "hash1")
+    id_frame = database.crea_frame(id_media, 0, 0.0, percorso_gestito)
+    connessione = database.ottieni_connessione()
+    assert connessione.execute("SELECT file_path FROM media_items WHERE id = ?", (id_media,)).fetchone()[0] \
+        == "data/archive/x.jpg"
+    connessione.close()
+    assert database.ottieni_elemento_multimediale(id_media)["file_path"] == percorso_gestito
     frames = database.ottieni_frame_di_media(id_media)
     assert len(frames) == 1 and frames[0]["clip_embedding_presente"] is False
     emb = np.ones(config.DIM_EMBEDDING_QWEN, dtype=np.float32)
@@ -56,6 +63,25 @@ def esegui_test():
     assert persone[0]["name"] == "Mario" and persone[0]["n_volti"] == 1
     media_p = database.ottieni_media_di_persona(id_p)
     assert len(media_p) == 1 and media_p[0]["id"] == id_media
+
+    # Ricostruzione Chroma: upsert dei BLOB SQLite e rimozione ID orfani.
+    class StoreFinto:
+        def __init__(self):
+            self.ids = {999999}
+        def conteggio(self):
+            return len(self.ids)
+        def aggiungi_o_aggiorna(self, ids, vettori, metadati):
+            assert len(ids) == len(vettori) == len(metadati)
+            self.ids.update(ids)
+        def elenca_id(self):
+            return list(self.ids)
+        def elimina(self, ids):
+            self.ids.difference_update(ids)
+    database._store_frame = StoreFinto()
+    database._store_volti = StoreFinto()
+    esito = database.sincronizza_indici_vettoriali(forza=True)
+    assert esito["frame"] == 1 and esito["volti"] == 1
+    assert esito["rimossi_frame"] == 1 and esito["rimossi_volti"] == 1
 
     # eliminazione multipla: ID validi, duplicati e mancanti
     eliminati, errori = database.elimina_elementi_multimediali([id_media, id_media, 999999])

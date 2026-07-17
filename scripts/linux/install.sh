@@ -1,217 +1,222 @@
 #!/usr/bin/env bash
-# Installatore DeepSight per Linux/macOS: crea il venv, rileva la GPU NVIDIA per
-# scegliere la build corretta di PyTorch, installa le dipendenze. Equivalente di
-# scripts/windows/install.ps1. A differenza dello script Windows NON installa
-# Python automaticamente: le distribuzioni Linux differiscono troppo (apt/dnf/
-# pacman/zypper) per farlo in modo affidabile: si limita a indicare il comando.
-set -euo pipefail
+# Installazione riproducibile DeepSight per Linux x86-64.
+set -Eeuo pipefail
 
-# Si posiziona nella cartella radice del progetto (questo script vive in
-# ./scripts/linux/, quindi risale di due livelli), cosi' venv/requirements.txt/src
-# vengono trovati indipendentemente da dove viene lanciato lo script.
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 VERDE='\033[0;32m'; GIALLO='\033[1;33m'; ROSSO='\033[0;31m'; CIANO='\033[0;36m'; RESET='\033[0m'
+acceleratore="cpu"
+prefetch_modelli=0
 
-# Installa un singolo pacchetto in modalita' silenziosa (-q, niente diluvio di
-# "Requirement already satisfied") e stampa subito l'esito nel punto dell'installazione:
-# "✅ <nome> installato correttamente", oppure "❌ <nome>: installazione fallita" e si ferma.
-# $1 = specifica pip (es. "numpy>=2.0.0"); gli argomenti successivi sono extra per pip.
-installa_pacchetto() {
-    local spec="$1"; shift
-    local nome="${spec%%[<>=!~; ]*}"   # nome = parte prima del primo operatore/spazio
-    if ./venv/bin/python -m pip install -q "$spec" "$@"; then
-        echo -e "${VERDE}  ✅ $nome installato correttamente${RESET}"
-    else
-        echo -e "${ROSSO}  ❌ $nome: installazione fallita${RESET}"
-        exit 1
-    fi
+uso() {
+    echo "Uso: $0 [--cpu|--cuda] [--prefetch-models]"
+    echo "  --cpu             profilo più compatibile (default)"
+    echo "  --cuda            PyTorch CUDA; Qwen resta CPU su Linux"
+    echo "  --prefetch-models scarica anche FaceNet e Whisper durante l'installazione"
 }
 
-echo -e "${CIANO}==========================================================${RESET}"
-echo -e "${CIANO}   DeepSight - SCRIPT DI INSTALLAZIONE LOCALE (Linux)${RESET}"
-echo -e "${CIANO}==========================================================${RESET}"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --cpu) acceleratore="cpu" ;;
+        --cuda) acceleratore="cuda" ;;
+        --prefetch-models) prefetch_modelli=1 ;;
+        -h|--help) uso; exit 0 ;;
+        *) echo "Argomento sconosciuto: $1"; uso; exit 2 ;;
+    esac
+    shift
+done
 
-# 1. Verifica presenza di Python >= 3.11 (stessa soglia minima di install.ps1:
-#    numpy>=2.0, chromadb e i wheel di PyTorch non funzionano su Python obsoleti).
+printf "%b\n" "${CIANO}==========================================================${RESET}"
+printf "%b\n" "${CIANO}  DeepSight - installazione Linux (${acceleratore})${RESET}"
+printf "%b\n" "${CIANO}==========================================================${RESET}"
+
+# Preflight: supporto ufficiale Ubuntu 22.04/24.04 x86-64. Altre distribuzioni
+# possono proseguire perché lo stack è standard, ma ricevono un avviso esplicito.
+if [ "$(uname -s)" != "Linux" ]; then
+    printf "%b\n" "${ROSSO}ERRORE: questo script supporta Linux; macOS richiede un installer dedicato.${RESET}"
+    exit 1
+fi
+architettura="$(uname -m)"
+if [ "$architettura" != "x86_64" ] && [ "$architettura" != "amd64" ]; then
+    printf "%b\n" "${ROSSO}ERRORE: architettura $architettura non supportata; serve x86-64.${RESET}"
+    exit 1
+fi
+
+id_distro="sconosciuta"
+if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    id_distro="${ID:-sconosciuta}"
+fi
+case "$id_distro" in
+    ubuntu|debian) ;;
+    *) printf "%b\n" "${GIALLO}Avviso: $id_distro non è ancora validata ufficialmente; proseguo in modalità compatibile.${RESET}" ;;
+esac
+
+mancanti=()
+for comando in tar sha256sum; do
+    command -v "$comando" >/dev/null 2>&1 || mancanti+=("$comando")
+done
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    mancanti+=("curl-o-wget")
+fi
+if [ "${#mancanti[@]}" -gt 0 ]; then
+    printf "%b\n" "${ROSSO}ERRORE: utility mancanti: ${mancanti[*]}${RESET}"
+    echo "Ubuntu/Debian: sudo apt install curl tar coreutils"
+    exit 1
+fi
+
+spazio_kb="$(df -Pk . | awk 'NR==2 {print $4}')"
+if [ -n "$spazio_kb" ] && [ "$spazio_kb" -lt 8388608 ]; then
+    printf "%b\n" "${GIALLO}Avviso: meno di 8 GB liberi; ambiente e modelli potrebbero non entrare.${RESET}"
+fi
+
 PYTHON_VERSIONE_MINIMA="3.11"
-
 versione_ok() {
-    # Confronta "$1" (es. 3.13) >= 3.11 senza dipendere da `sort -V` o `bc`.
     local maggiore="${1%%.*}" minore="${1#*.}"
-    local maggiore_min="${PYTHON_VERSIONE_MINIMA%%.*}" minore_min="${PYTHON_VERSIONE_MINIMA#*.}"
-    [ "$maggiore" -gt "$maggiore_min" ] || { [ "$maggiore" -eq "$maggiore_min" ] && [ "$minore" -ge "$minore_min" ]; }
+    [ "$maggiore" -gt 3 ] || { [ "$maggiore" -eq 3 ] && [ "$minore" -ge 11 ]; }
 }
 
 python_exe=""
-for candidato in python3.13 python3.12 python3.11 python3; do
+for candidato in python3.12 python3.11 python3.13 python3; do
     if command -v "$candidato" >/dev/null 2>&1; then
-        v=$("$candidato" -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null || true)
-        if [ -n "$v" ] && versione_ok "$v"; then
+        versione=$("$candidato" -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null || true)
+        if [ -n "$versione" ] && versione_ok "$versione"; then
             python_exe="$candidato"
             break
         fi
     fi
 done
-
 if [ -z "$python_exe" ]; then
-    echo -e "${ROSSO}ERRORE: nessun Python $PYTHON_VERSIONE_MINIMA+ trovato.${RESET}"
-    echo -e "${GIALLO}Installalo con il gestore pacchetti della tua distribuzione, ad esempio:${RESET}"
-    echo "  Ubuntu/Debian:  sudo apt install python3 python3-venv python3-pip"
-    echo "  Fedora:         sudo dnf install python3 python3-pip"
-    echo "  Arch:           sudo pacman -S python python-pip"
-    echo "Poi rilancia questo script."
+    printf "%b\n" "${ROSSO}ERRORE: serve Python ${PYTHON_VERSIONE_MINIMA}+ (raccomandati 3.11/3.12).${RESET}"
+    echo "Ubuntu/Debian: sudo apt install python3 python3-venv python3-pip"
     exit 1
 fi
-
-echo -e "${VERDE}Rilevato: $("$python_exe" --version)${RESET}"
-
-# 1-bis. Verifica che il modulo venv sia utilizzabile. Su Debian/Ubuntu Python e'
-# spezzato in piu' pacchetti: 'python3' c'e' e supera il controllo di versione qui
-# sopra, ma 'ensurepip' vive in python3-venv e senza quello la creazione dell'
-# ambiente virtuale fallisce. Meglio dirlo subito, con il nome del pacchetto giusto.
 if ! "$python_exe" -c "import venv, ensurepip" >/dev/null 2>&1; then
-    echo -e "${ROSSO}ERRORE: il modulo 'venv' di Python non e' utilizzabile (manca 'ensurepip').${RESET}"
-    echo -e "${GIALLO}Su Debian/Ubuntu va installato a parte:${RESET}"
-    # Su Ubuntu il pacchetto e' spesso versionato (es. python3.12-venv), quindi si
-    # suggerisce prima quello che corrisponde all'interprete effettivamente trovato.
-    echo "  sudo apt install python${v}-venv    # oppure: sudo apt install python3-venv"
-    echo -e "${GIALLO}Su Fedora e Arch 'venv' e' gia' incluso nel pacchetto Python.${RESET}"
-    echo "Poi rilancia questo script."
+    versione=$("$python_exe" -c "import sys; print('%d.%d' % sys.version_info[:2])")
+    printf "%b\n" "${ROSSO}ERRORE: modulo venv/ensurepip non disponibile.${RESET}"
+    echo "Ubuntu/Debian: sudo apt install python${versione}-venv"
+    exit 1
+fi
+printf "%b\n" "${VERDE}Preflight OK: $id_distro $architettura, $("$python_exe" --version)${RESET}"
+
+if [ -d venv ] && [ ! -x venv/bin/python ]; then
+    printf "%b\n" "${ROSSO}ERRORE: venv esiste ma non è Linux (forse proviene da Windows).${RESET}"
+    echo "Spostalo o eliminalo manualmente, poi rilancia l'installatore."
     exit 1
 fi
 
-# 2. Creazione dell'ambiente virtuale venv
-echo -e "\n${CIANO}[1/6] Creazione dell'ambiente virtuale (venv) in corso...${RESET}"
+printf "%b\n" "${CIANO}[1/6] Ambiente virtuale${RESET}"
 "$python_exe" -m venv venv
-echo -e "${VERDE}  ✅ venv (ambiente virtuale) creato correttamente${RESET}"
+PYTHON_VENV="./venv/bin/python"
+"$PYTHON_VENV" -m pip install -q --upgrade pip setuptools wheel
 
-# 3. Aggiornamento pip interno
-echo -e "\n${CIANO}[2/6] Aggiornamento di pip nell'ambiente virtuale...${RESET}"
-./venv/bin/python -m pip install -q --upgrade pip
-echo -e "${VERDE}  ✅ pip aggiornato correttamente${RESET}"
-
-# 4. Rilevamento GPU NVIDIA per scegliere la build corretta di PyTorch
-echo -e "\n${CIANO}[3/6] Rilevamento hardware (GPU NVIDIA)...${RESET}"
-if command -v nvidia-smi >/dev/null 2>&1; then
-    indice_torch="https://download.pytorch.org/whl/cu124"
-    echo -e "${VERDE}GPU NVIDIA rilevata: verra' installato PyTorch con supporto CUDA (cu124).${RESET}"
+printf "%b\n" "${CIANO}[2/6] PyTorch e torchvision${RESET}"
+if [ "$acceleratore" = "cuda" ]; then
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        printf "%b\n" "${ROSSO}ERRORE: --cuda richiesto ma nvidia-smi non è disponibile.${RESET}"
+        exit 1
+    fi
+    indice_torch="${DEEPSIGHT_TORCH_INDEX:-https://download.pytorch.org/whl/cu124}"
 else
     indice_torch="https://download.pytorch.org/whl/cpu"
-    echo -e "${GIALLO}Nessuna GPU NVIDIA rilevata: verra' installato PyTorch in versione CPU (download piu' leggero).${RESET}"
 fi
+"$PYTHON_VENV" -m pip install -q "torch>=2.0,<3.0" "torchvision>=0.15,<1.0" --index-url "$indice_torch"
+printf "%b\n" "${VERDE}  OK torch + torchvision (${acceleratore})${RESET}"
 
-# 5. Installazione di PyTorch dalla build corretta (CUDA o CPU), un pacchetto alla
-#    volta cosi' la conferma "installato correttamente" appare appena e' pronto.
-echo -e "\n${CIANO}[4/6] Installazione di PyTorch (torch, torchvision)...${RESET}"
-echo -e "${GIALLO}Questa operazione potrebbe richiedere diversi minuti a seconda della connessione internet...${RESET}"
-installa_pacchetto torch       --index-url "$indice_torch"
-installa_pacchetto torchvision --index-url "$indice_torch"
+installa_pacchetto() {
+    local spec="$1"; shift
+    local nome="${spec%%[<>=!~; ]*}"
+    if "$PYTHON_VENV" -m pip install -q "$spec" "$@"; then
+        printf "%b\n" "${VERDE}  OK $nome${RESET}"
+    else
+        printf "%b\n" "${ROSSO}  ERRORE installazione $nome${RESET}"
+        exit 1
+    fi
+}
 
-# 6. Installazione degli altri pacchetti da requirements.txt, uno alla volta: cosi' ogni
-#    "✅ <pkg> installato correttamente" compare nel punto esatto in cui quel pacchetto
-#    viene installato. torch/torchvision sono gia' stati messi allo step precedente dalla
-#    index CUDA/CPU corretta e vengono saltati qui. Per aggiungere una dipendenza basta
-#    requirements.txt, senza toccare questo script.
-echo -e "\n${CIANO}[5/6] Installazione dei pacchetti base da requirements.txt (Whisper, Streamlit, OpenCV, ChromaDB)...${RESET}"
+printf "%b\n" "${CIANO}[3/6] Dipendenze applicative${RESET}"
 while IFS= read -r riga || [ -n "$riga" ]; do
-    riga="${riga%$'\r'}"          # via eventuale CR (file salvato su Windows)
-    spec="${riga%%#*}"            # via commento (a inizio riga o in coda)
-    read -r spec <<< "$spec" || true   # trim spazi iniziali/finali
+    riga="${riga%$'\r'}"
+    spec="${riga%%#*}"
+    read -r spec <<< "$spec" || true
     [ -z "$spec" ] && continue
     nome="${spec%%[<>=!~; ]*}"
-    if [ "$nome" = torch ] || [ "$nome" = torchvision ]; then continue; fi
+    [ "$nome" = torch ] && continue
+    [ "$nome" = torchvision ] && continue
     installa_pacchetto "$spec"
 done < requirements.txt
+installa_pacchetto "facenet-pytorch==2.6.0" --no-deps
 
-# 7. Installazione modelli local-only no-deps
-echo -e "\n${CIANO}[6/6] Installazione di facenet-pytorch (--no-deps, per evitare NumPy < 2.0)...${RESET}"
-installa_pacchetto facenet-pytorch --no-deps
-
-echo -e "\n${VERDE}==========================================================${RESET}"
-echo -e "${VERDE} INSTALLAZIONE COMPLETATA CON SUCCESSO!${RESET}"
-echo -e "${VERDE}==========================================================${RESET}"
-echo -e "${GIALLO}Per avviare l'applicazione: ./scripts/linux/run.sh${RESET}"
-echo -e "${VERDE}==========================================================${RESET}"
-
-# 8. Download automatico dei modelli Qwen (~2.1 GB da Hugging Face) e di
-#    llama-server (release ufficiale llama.cpp, build CPU). Idempotente: i file
-#    gia' presenti non vengono riscaricati. Non bloccante (set +e locale): se il
-#    download fallisce l'app parte comunque e la coda segnera' gli embedding
-#    come falliti, recuperabili con "Riprova falliti" dopo aver rieseguito lo script.
-echo -e "\n${CIANO}[Extra] Download modelli Qwen + llama-server (se mancanti)...${RESET}"
+printf "%b\n" "${CIANO}[4/6] Modelli Qwen e llama-server${RESET}"
 dir_qwen="models/qwen"
 mkdir -p "$dir_qwen"
-set +e
 
-# Scarica su file .part e rinomina a fine download: un download interrotto non
-# lascia mai un file parziale col nome definitivo (che verrebbe saltato al retry).
-scarica() { # $1=url $2=destinazione
-    if [ -f "$2" ]; then echo -e "${VERDE}  gia' presente: $(basename "$2")${RESET}"; return 0; fi
-    echo -e "${CIANO}  download: $(basename "$2")${RESET}"
-    if command -v curl >/dev/null 2>&1; then
-        curl -L --fail --retry 3 -C - -o "$2.part" "$1"
-    else
-        wget -c -O "$2.part" "$1"
+scarica() { # $1=url, $2=destinazione
+    local url="$1" destinazione="$2"
+    if [ -f "$destinazione" ]; then
+        printf "%b\n" "${VERDE}  presente: $(basename "$destinazione")${RESET}"
+        return 0
     fi
-    if [ $? -ne 0 ]; then echo -e "${ROSSO}  FALLITO: $(basename "$2")${RESET}"; return 1; fi
-    mv -f "$2.part" "$2"
+    printf "%b\n" "${CIANO}  download: $(basename "$destinazione")${RESET}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -L --fail --retry 3 -C - -o "$destinazione.part" "$url"
+    else
+        wget -c -O "$destinazione.part" "$url"
+    fi
+    mv -f "$destinazione.part" "$destinazione"
 }
 
 url_hf="https://huggingface.co/DevQuasar/Qwen.Qwen3-VL-Embedding-2B-GGUF/resolve/main"
-
-# SHA-256 ufficiali (metadati LFS del repo Hugging Face). La verifica e'
-# obbligatoria: un GGUF corrotto NON fa fallire llama-server, produce embedding
-# NaN silenziosi (successo davvero: ricerca rotta senza alcun errore visibile).
 sha_atteso() {
     case "$1" in
-        "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf")     echo "3f2f9023f15d5f3f084034eb5f14cc04a8e8d89b1f262354db9cf63c50308206" ;;
+        "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf") echo "3f2f9023f15d5f3f084034eb5f14cc04a8e8d89b1f262354db9cf63c50308206" ;;
         "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf") echo "3f89a7768ffa6606935319f71bf56bb71871249ba549bf1080a0caea7a088613" ;;
     esac
 }
-
-ok=0
 for nome_gguf in "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf" "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf"; do
-    if ! scarica "$url_hf/$nome_gguf" "$dir_qwen/$nome_gguf"; then ok=1; continue; fi
-    echo -e "${CIANO}  verifica SHA-256: $nome_gguf${RESET}"
+    scarica "$url_hf/$nome_gguf" "$dir_qwen/$nome_gguf"
     sha_file=$(sha256sum "$dir_qwen/$nome_gguf" | cut -d' ' -f1)
     if [ "$sha_file" != "$(sha_atteso "$nome_gguf")" ]; then
-        rm -f "$dir_qwen/$nome_gguf"
-        echo -e "${ROSSO}  CORROTTO (hash non corrispondente): $nome_gguf eliminato. Rilancia lo script per riscaricarlo.${RESET}"
-        ok=1
+        rm -f -- "$dir_qwen/$nome_gguf"
+        printf "%b\n" "${ROSSO}ERRORE: hash non valido per $nome_gguf; file eliminato.${RESET}"
+        exit 1
     fi
 done
 
-# llama-server: release pinnata di llama.cpp, build CPU. A differenza di Windows qui
-# resta sempre la build CPU: llama.cpp b10016 non pubblica binari CUDA precompilati per
-# Linux (solo ROCm/Vulkan/SYCL), quindi la GPU NVIDIA su Linux richiederebbe la build
-# Vulkan o la compilazione da sorgente (fuori scope). Su CPU l'app lancia con -ngl 0.
-# ponytail: versione fissa b10016, da alzare a mano se una futura quantizzazione la richiede.
 if [ ! -f "$dir_qwen/llama-server" ]; then
     tag_llama="b10016"
-    tar_llama="/tmp/llama-$tag_llama-bin-ubuntu-x64.tar.gz"
-    if scarica "https://github.com/ggml-org/llama.cpp/releases/download/$tag_llama/llama-$tag_llama-bin-ubuntu-x64.tar.gz" "$tar_llama"; then
-        dir_estrazione="/tmp/llama-estratto"
-        rm -rf "$dir_estrazione"; mkdir -p "$dir_estrazione"
-        tar -xzf "$tar_llama" -C "$dir_estrazione"
-        # Il layout interno dell'archivio e' cambiato tra le release: si cerca il
-        # binario ovunque e si copiano eseguibile + librerie dalla sua cartella.
-        exe=$(find "$dir_estrazione" -name llama-server -type f | head -n 1)
-        if [ -n "$exe" ]; then
-            cp "$(dirname "$exe")"/* "$dir_qwen/" 2>/dev/null
-            chmod +x "$dir_qwen/llama-server"
-            echo -e "${VERDE}  llama-server installato in $dir_qwen/${RESET}"
-        else
-            echo -e "${ROSSO}  FALLITO: llama-server non trovato nell'archivio.${RESET}"; ok=1
-        fi
-        rm -rf "$dir_estrazione" "$tar_llama"
-    else ok=1; fi
-else
-    echo -e "${VERDE}  gia' presente: llama-server${RESET}"
+    temporanea=$(mktemp -d)
+    pulisci_temporanea() { rm -rf -- "$temporanea"; }
+    trap pulisci_temporanea EXIT
+    archivio_llama="$temporanea/llama.tar.gz"
+    scarica "https://github.com/ggml-org/llama.cpp/releases/download/$tag_llama/llama-$tag_llama-bin-ubuntu-x64.tar.gz" "$archivio_llama"
+    mkdir -p "$temporanea/estratto"
+    tar -xzf "$archivio_llama" -C "$temporanea/estratto"
+    exe=$(find "$temporanea/estratto" -name llama-server -type f | head -n 1)
+    if [ -z "$exe" ]; then
+        printf "%b\n" "${ROSSO}ERRORE: llama-server non trovato nell'archivio ufficiale.${RESET}"
+        exit 1
+    fi
+    cp -a "$(dirname "$exe")"/. "$dir_qwen"/
 fi
-set -e
+chmod +x "$dir_qwen/llama-server"
+if ! "$dir_qwen/llama-server" --version >/dev/null 2>&1; then
+    printf "%b\n" "${ROSSO}ERRORE: llama-server non è avviabile (librerie Linux mancanti).${RESET}"
+    exit 1
+fi
 
-if [ "$ok" -ne 0 ]; then
-    echo -e "\n${GIALLO}ATTENZIONE: download dei modelli incompleto. Riesegui questo script con${RESET}"
-    echo -e "${GIALLO}una connessione attiva, oppure copia i file a mano in $dir_qwen/ (vedi README).${RESET}"
+printf "%b\n" "${CIANO}[5/6] Modelli opzionali${RESET}"
+if [ "$prefetch_modelli" -eq 1 ]; then
+    "$PYTHON_VENV" scripts/prefetch_models.py
+else
+    echo "  FaceNet e Whisper saranno scaricati al primo uso. Usa --prefetch-models per prepararli ora."
 fi
+
+printf "%b\n" "${CIANO}[6/6] Diagnostica finale${RESET}"
+"$PYTHON_VENV" scripts/check_install.py
+if [ "$acceleratore" = "cuda" ]; then
+    "$PYTHON_VENV" -c "import torch; print('CUDA PyTorch disponibile:', torch.cuda.is_available())"
+fi
+
+printf "%b\n" "${VERDE}Installazione completata. Avvia con ./scripts/linux/run.sh${RESET}"
