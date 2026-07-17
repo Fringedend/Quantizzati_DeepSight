@@ -160,35 +160,31 @@ def ottieni_proprieta_video(percorso_video):
     }
 
 def crea_anteprima(percorso_originale, tipo_media):
-    """Genera un'immagine di anteprima (thumbnail) e la salva nella cartella dedicata."""
+    """Genera la miniatura del primo frame di un VIDEO e la salva nella cartella dedicata.
+
+    Le immagini NON hanno più una miniatura: in galleria/dashboard mostrano l'originale
+    ridimensionato al volo (nitido), quindi generarla sarebbe uno spreco. La miniatura
+    resta solo per i video, come fotogramma di ripiego quando il file non è disponibile.
+    """
+    if tipo_media != 'video':
+        return None
+
     nome_file = os.path.basename(percorso_originale)
     nome_senza_est, _ = os.path.splitext(nome_file)
     percorso_anteprima = os.path.join(config.DIR_ANTEPRIME, f"{nome_senza_est}.jpg")
-    
+
     try:
-        if tipo_media == 'image':
-            with Image.open(percorso_originale) as img_raw:
-                # Applica l'orientamento EXIF (le foto verticali da telefono hanno un tag
-                # "Orientation": senza questo la miniatura verrebbe salvata ruotata).
-                img = ImageOps.exif_transpose(img_raw)
+        cattura = cv2.VideoCapture(percorso_originale)
+        if cattura.isOpened():
+            # Legge il primo frame per l'anteprima
+            letto_correttamente, frame = cattura.read()
+            if letto_correttamente:
+                # Converte in RGB ed in formato PIL
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame_rgb)
                 img.thumbnail((300, 300))
-                # JPEG non supporta alfa/palette: converte qualsiasi modalità non-RGB
-                # (RGBA, LA, P dei PNG con palette, ecc.) per evitare errori in salvataggio.
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
                 img.save(percorso_anteprima, "JPEG")
-        elif tipo_media == 'video':
-            cattura = cv2.VideoCapture(percorso_originale)
-            if cattura.isOpened():
-                # Legge il primo frame per l'anteprima
-                letto_correttamente, frame = cattura.read()
-                if letto_correttamente:
-                    # Converte in RGB ed in formato PIL
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    img = Image.fromarray(frame_rgb)
-                    img.thumbnail((300, 300))
-                    img.save(percorso_anteprima, "JPEG")
-                cattura.release()
+            cattura.release()
         return percorso_anteprima if os.path.exists(percorso_anteprima) else None
     except Exception as errore:
         print(f"Impossibile creare l'anteprima per {percorso_originale}: {errore}")
