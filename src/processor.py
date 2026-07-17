@@ -238,7 +238,7 @@ def estrai_audio_video(percorso_video):
 # rilanciare src/ricalcola_tag.py per riclassificare l'archivio esistente.
 CATEGORIE = [
     "uomo", "donna", "bambino", "famiglia", "gruppo di persone", "paesaggio",
-    "cane", "gatto", "uccello", "cavallo", "animale", "pesce", "rettile", "insetto", "fantasy", "robot", "alieno", "mostro", "fantasma",
+    "cane", "gatto", "uccello", "cavallo", "animale", "pesce", "rettile", "insetto", "fantasy", "robot", "alieno", "mostro",
     "automobile", "motocicletta", "bicicletta", "camion", "aereo", "barca", "veicolo",
     "edificio", "casa", "ufficio", "strada", "città",
     "natura", "albero", "foresta", "fiore", "giardino", "prato",
