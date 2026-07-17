@@ -1,5 +1,5 @@
 """Misura le distribuzioni dei coseni Qwen sull'archivio reale, per tarare
-SCALA_LOGIT_TAG e capire come si distribuiscono i punteggi di ricerca
+SOGLIA_COSENO_TAG e capire come si distribuiscono i punteggi di ricerca
 (le ricerche non hanno piu' soglie: la UI mostra sempre i migliori per rilevanza).
 Uso: python calibra_soglie.py "query di prova" [altra query ...]
 """

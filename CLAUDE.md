@@ -80,8 +80,12 @@ tried in practice either hid everything or nothing. So the UI (`app.py`, "Ricerc
 Avanzata") never filters by score: results are sorted by relevance and paginated —
 top 5, then a "Mostra altri" button (+10 per click; the counter resets via a signature
 of the search inputs in `st.session_state["firma_ricerca"]`). Only face search keeps a
-threshold (`SOGLIA_SIMILARITA_VOLTI` — FaceNet, empirically calibrated). `SCALA_LOGIT_TAG`
-for zero-shot tags is still a CLIP-era placeholder; measure with `src/calibra_soglie.py`.
+threshold (`SOGLIA_SIMILARITA_VOLTI` — FaceNet, empirically calibrated). Zero-shot tags
+are multi-label: a category is a tag if its raw cosine ≥ `SOGLIA_COSENO_TAG` (no softmax —
+softmax made categories compete, so the dominant subject crushed secondary ones); the
+top-1 category is always kept. After editing `processor.CATEGORIE` or the threshold,
+rerun `src/ricalcola_tag.py` (re-tags the whole archive from stored embeddings, no
+re-embedding). Measure distributions with `src/calibra_soglie.py`.
 The text-search tab also supports an optional negative prompt: the UI embeds a second
 "must not contain" phrase and the final score becomes
 `cos(query, frame) - config.LAMBDA_PROMPT_NEGATIVO * cos(negative, frame)`.

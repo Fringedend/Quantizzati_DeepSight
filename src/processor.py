@@ -264,19 +264,20 @@ def _embedding_categorie(qwen):
     return _embedding_categorie_precomputati
 
 def classifica_tag(embedding_immagine, soglia=None, max_tag=None):
-    """Tag zero-shot: softmax(coseni * config.SCALA_LOGIT_TAG) sulle categorie comuni."""
+    """Tag zero-shot multi-etichetta: una categoria e' un tag se il suo coseno con
+    l'immagine supera la soglia. Niente softmax: con la softmax le categorie
+    competono e il soggetto dominante schiaccia quelli secondari (la donna in una
+    foto col cane finiva allo 0.3% e spariva). La categoria migliore viene tenuta
+    comunque, anche sotto soglia: ogni immagine ha sempre almeno un tag."""
     if soglia is None:
-        soglia = config.SOGLIA_PROBABILITA_TAG
+        soglia = config.SOGLIA_COSENO_TAG
     if max_tag is None:
         max_tag = config.MASSIMO_TAG_PER_IMMAGINE
     embedding_cat = _embedding_categorie(gestore.ottieni_qwen())
-    similarita = np.array([float(np.dot(embedding_immagine, e)) for _, e in embedding_cat])
-    logits = similarita * config.SCALA_LOGIT_TAG
-    exp_logits = np.exp(logits - np.max(logits))
-    probabilita = exp_logits / np.sum(exp_logits)
-    coppie = [(cat, p) for (cat, _), p in zip(embedding_cat, probabilita) if p >= soglia]
-    coppie.sort(key=lambda x: x[1], reverse=True)
-    return [cat for cat, _ in coppie[:max_tag]]
+    coppie = sorted(((float(np.dot(embedding_immagine, e)), cat) for cat, e in embedding_cat),
+                    reverse=True)
+    tags = [cat for sim, cat in coppie if sim >= soglia]
+    return (tags or [coppie[0][1]])[:max_tag]
 
 def registra_file(percorso_origine, hash_precalcolato=None):
     """

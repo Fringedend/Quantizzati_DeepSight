@@ -52,9 +52,13 @@ ISTRUZIONE_RICERCA = "Recupera le immagini pertinenti alla query dell'utente."
 # Prompt negativo: punteggio finale = cos(query, img) - LAMBDA * cos(negativo, img)
 LAMBDA_PROMPT_NEGATIVO = 0.5
 
-# Tag zero-shot con Qwen: softmax(similarita' * SCALA_LOGIT_TAG). Qwen non ha la
-# logit_scale appresa di CLIP: la scala e' una costante da tarare (vedi calibra_soglie.py).
-SCALA_LOGIT_TAG = 40.0
+# Tag zero-shot con Qwen: multi-etichetta, una categoria e' un tag se il coseno
+# immagine<->categoria supera questa soglia (niente softmax: le categorie non
+# competono tra loro, altrimenti il soggetto dominante schiaccia quelli secondari —
+# es. la donna in una foto col cane finiva allo 0.3% e spariva). Valore tarato
+# sull'archivio reale: i tag corretti stavano a >=0.391, il rumore a <=0.383
+# (vedi calibra_soglie.py per rimisurare).
+SOGLIA_COSENO_TAG = 0.385
 
 # Configurazione del dispositivo hardware: 'auto', 'cpu', 'cuda'
 MODALITA_DISPOSITIVO = "auto"
@@ -80,7 +84,4 @@ SOGLIA_CONFIDENZA_RILEVAMENTO_VOLTO = 0.90
 # i risultati sono sempre ordinati per rilevanza e la UI mostra i migliori 5 + "Mostra altri".
 # Le vecchie soglie CLIP (adattiva testo, SOGLIA_SIMILARITA_IMMAGINE) sono state rimosse.
 
-# Impostazioni per la classificazione dei tag (basata sulla probabilità softmax)
-# Probabilità softmax minima affinché una categoria venga assegnata come tag.
-SOGLIA_PROBABILITA_TAG = 0.05  # Soglia minima del 5%
 MASSIMO_TAG_PER_IMMAGINE = 10  # Numero massimo di tag assegnati per immagine/frame
