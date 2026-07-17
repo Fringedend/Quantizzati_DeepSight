@@ -1231,6 +1231,7 @@ if menu == "📊 Dashboard":
         st.write(f"- **File falliti:** {statistiche['failed_count']}")
     
     with col_dettaglio2:
+        st.write(f"- **Dimensione Database:** {ottieni_stringa_dimensione_file(statistiche['db_size_bytes'])}")
         st.write(f"- **Cartella Archivio:** `{config.DIR_ARCHIVIO}`")
 
     # Elementi aggiunti di recente
