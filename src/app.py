@@ -1184,7 +1184,7 @@ if menu == "📊 Dashboard":
     
     # 4 Colonne per le metriche principali
     metriche = [
-        (statistiche['images_count'] + statistiche['videos_count'], "Elementi Indicizzati"),
+        (statistiche['images_count'] + statistiche['videos_count'], "Elementi Analizzati"),
         (statistiche['frames_count'], "Frame Estratti"),
         (statistiche['faces_count'], "Volti Rilevati"),
         (ottieni_stringa_dimensione_file(statistiche['total_size_bytes']), "Dimensione Archivio"),
@@ -1208,9 +1208,7 @@ if menu == "📊 Dashboard":
         st.write(f"- **File falliti:** {statistiche['failed_count']}")
     
     with col_dettaglio2:
-        st.write(f"- **Dimensione Database SQLite:** {ottieni_stringa_dimensione_file(statistiche['db_size_bytes'])}")
         st.write(f"- **Cartella Archivio:** `{config.DIR_ARCHIVIO}`")
-        st.write(f"- **Cartella Database:** `{config.DIR_DB}`")
 
     # Elementi aggiunti di recente
     st.markdown("### Elementi Aggiunti di Recente")
