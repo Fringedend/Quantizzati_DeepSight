@@ -1626,7 +1626,7 @@ elif menu == "🔍 Ricerca Avanzata":
 
     statistiche_ricerca = database.ottieni_statistiche_db()
     if statistiche_ricerca["total_items"] == 0:
-        st.warning(
+        st.info(
             "L'archivio è vuoto. Carica almeno una foto, un video o una GIF "
             "prima di eseguire una ricerca."
         )
