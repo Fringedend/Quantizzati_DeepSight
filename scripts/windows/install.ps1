@@ -4,6 +4,27 @@
 # dove viene lanciato lo script.
 Set-Location -Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 
+# Console in UTF-8, cosi' le emoji dei messaggi (✅ / ❌) vengono mostrate correttamente.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+# Installa un singolo pacchetto in modalita' silenziosa (-q, niente diluvio di
+# "Requirement already satisfied") e stampa subito l'esito nel punto dell'installazione:
+# "✅ <nome> installato correttamente", oppure "❌ <nome>: installazione fallita" e si ferma.
+# $spec e' la specifica pip completa (es. "numpy>=2.0.0"); il nome mostrato ne e' la parte
+# iniziale. $extra sono argomenti pip aggiuntivi (es. --index-url ..., --no-deps).
+function Installa-Pacchetto {
+    param([string]$spec, [string[]]$extra = @())
+    $nome = ($spec -split '[<>=!~;\[\s]')[0]
+    .\venv\Scripts\python -m pip install -q $spec @extra
+    if ($?) {
+        Write-Host ("  {0} {1} installato correttamente" -f [char]0x2705, $nome) -ForegroundColor Green
+    } else {
+        Write-Host ("  {0} {1}: installazione fallita" -f [char]0x274C, $nome) -ForegroundColor Red
+        Pause
+        Exit 1
+    }
+}
+
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "   DeepSight - SCRIPT DI INSTALLAZIONE LOCALE" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
@@ -123,11 +144,12 @@ if (-not $?) {
     Pause
     Exit 1
 }
-Write-Host "Ambiente virtuale creato con successo!" -ForegroundColor Green
+Write-Host ("  {0} venv (ambiente virtuale) creato correttamente" -f [char]0x2705) -ForegroundColor Green
 
 # 3. Aggiornamento pip interno
 Write-Host "`n[2/6] Aggiornamento di pip nell'ambiente virtuale..." -ForegroundColor Cyan
-.\venv\Scripts\python -m pip install --upgrade pip
+.\venv\Scripts\python -m pip install -q --upgrade pip
+if ($?) { Write-Host ("  {0} pip aggiornato correttamente" -f [char]0x2705) -ForegroundColor Green }
 
 # 4. Rilevamento GPU NVIDIA per scegliere la build corretta di PyTorch
 Write-Host "`n[3/6] Rilevamento hardware (GPU NVIDIA)..." -ForegroundColor Cyan
@@ -153,37 +175,31 @@ if ($gpuNvidia) {
     Write-Host "Nessuna GPU NVIDIA rilevata: verrà installato PyTorch in versione CPU (download più leggero)." -ForegroundColor Yellow
 }
 
-# 5. Installazione di PyTorch dalla build corretta (CUDA o CPU)
+# 5. Installazione di PyTorch dalla build corretta (CUDA o CPU), un pacchetto alla
+#    volta cosi' la conferma "installato correttamente" appare appena e' pronto.
 Write-Host "`n[4/6] Installazione di PyTorch (torch, torchvision)..." -ForegroundColor Cyan
 Write-Host "Questa operazione potrebbe richiedere diversi minuti a seconda della connessione internet..." -ForegroundColor Yellow
-.\venv\Scripts\python -m pip install torch torchvision --index-url $indiceTorch
-if (-not $?) {
-    Write-Host "ERRORE: Installazione di PyTorch fallita." -ForegroundColor Red
-    Pause
-    Exit 1
-}
+Installa-Pacchetto "torch"       @("--index-url", $indiceTorch)
+Installa-Pacchetto "torchvision" @("--index-url", $indiceTorch)
 
-# 6. Installazione degli altri pacchetti base leggendoli da requirements.txt
-#    (torch/torchvision sono gia' stati installati allo step precedente dalla
-#    index CUDA/CPU corretta: pip li vedra' gia' soddisfatti e non li reinstallera'
-#    da PyPI. Aggiungere una dipendenza a requirements.txt e' quindi sufficiente,
-#    senza dover modificare questo script.)
+# 6. Installazione degli altri pacchetti base leggendoli da requirements.txt, uno alla
+#    volta: cosi' ogni "✅ <pkg> installato correttamente" compare nel punto esatto in cui
+#    quel pacchetto viene installato. torch/torchvision sono gia' stati messi allo step
+#    precedente dalla index CUDA/CPU corretta: pip li vedra' gia' soddisfatti (nessun
+#    reinstall da PyPI). Aggiungere una dipendenza a requirements.txt e' quindi sufficiente,
+#    senza toccare questo script.
 Write-Host "`n[5/6] Installazione dei pacchetti base da requirements.txt (Whisper, Streamlit, OpenCV, ChromaDB)..." -ForegroundColor Cyan
-.\venv\Scripts\python -m pip install -r requirements.txt
-if (-not $?) {
-    Write-Host "ERRORE: Installazione delle dipendenze di base fallita." -ForegroundColor Red
-    Pause
-    Exit 1
+foreach ($riga in Get-Content requirements.txt) {
+    $spec = ($riga -replace '#.*$', '').Trim()   # via commenti (a inizio riga o in coda) e spazi
+    if (-not $spec) { continue }
+    $nome = ($spec -split '[<>=!~;\[\s]')[0]
+    if ($nome -in 'torch', 'torchvision') { continue }  # gia' installati dalla index CUDA/CPU allo step [4/6]
+    Installa-Pacchetto $spec
 }
 
 # 5. Installazione modelli local-only no-deps
 Write-Host "`n[6/6] Installazione di facenet-pytorch (--no-deps, per evitare NumPy < 2.0)..." -ForegroundColor Cyan
-.\venv\Scripts\python -m pip install facenet-pytorch --no-deps
-if (-not $?) {
-    Write-Host "ERRORE: Installazione del pacchetto FaceNet fallita." -ForegroundColor Red
-    Pause
-    Exit 1
-}
+Installa-Pacchetto "facenet-pytorch" @("--no-deps")
 
 Write-Host "`n==========================================================" -ForegroundColor Green
 Write-Host " INSTALLAZIONE COMPLETATA CON SUCCESSO!" -ForegroundColor Green

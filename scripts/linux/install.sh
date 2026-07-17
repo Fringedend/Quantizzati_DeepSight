@@ -13,6 +13,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 VERDE='\033[0;32m'; GIALLO='\033[1;33m'; ROSSO='\033[0;31m'; CIANO='\033[0;36m'; RESET='\033[0m'
 
+# Installa un singolo pacchetto in modalita' silenziosa (-q, niente diluvio di
+# "Requirement already satisfied") e stampa subito l'esito nel punto dell'installazione:
+# "✅ <nome> installato correttamente", oppure "❌ <nome>: installazione fallita" e si ferma.
+# $1 = specifica pip (es. "numpy>=2.0.0"); gli argomenti successivi sono extra per pip.
+installa_pacchetto() {
+    local spec="$1"; shift
+    local nome="${spec%%[<>=!~; ]*}"   # nome = parte prima del primo operatore/spazio
+    if ./venv/bin/python -m pip install -q "$spec" "$@"; then
+        echo -e "${VERDE}  ✅ $nome installato correttamente${RESET}"
+    else
+        echo -e "${ROSSO}  ❌ $nome: installazione fallita${RESET}"
+        exit 1
+    fi
+}
+
 echo -e "${CIANO}==========================================================${RESET}"
 echo -e "${CIANO}   DeepSight - SCRIPT DI INSTALLAZIONE LOCALE (Linux)${RESET}"
 echo -e "${CIANO}==========================================================${RESET}"
@@ -69,11 +84,12 @@ fi
 # 2. Creazione dell'ambiente virtuale venv
 echo -e "\n${CIANO}[1/6] Creazione dell'ambiente virtuale (venv) in corso...${RESET}"
 "$python_exe" -m venv venv
-echo -e "${VERDE}Ambiente virtuale creato con successo!${RESET}"
+echo -e "${VERDE}  ✅ venv (ambiente virtuale) creato correttamente${RESET}"
 
 # 3. Aggiornamento pip interno
 echo -e "\n${CIANO}[2/6] Aggiornamento di pip nell'ambiente virtuale...${RESET}"
-./venv/bin/python -m pip install --upgrade pip
+./venv/bin/python -m pip install -q --upgrade pip
+echo -e "${VERDE}  ✅ pip aggiornato correttamente${RESET}"
 
 # 4. Rilevamento GPU NVIDIA per scegliere la build corretta di PyTorch
 echo -e "\n${CIANO}[3/6] Rilevamento hardware (GPU NVIDIA)...${RESET}"
@@ -85,21 +101,32 @@ else
     echo -e "${GIALLO}Nessuna GPU NVIDIA rilevata: verra' installato PyTorch in versione CPU (download piu' leggero).${RESET}"
 fi
 
-# 5. Installazione di PyTorch dalla build corretta (CUDA o CPU)
+# 5. Installazione di PyTorch dalla build corretta (CUDA o CPU), un pacchetto alla
+#    volta cosi' la conferma "installato correttamente" appare appena e' pronto.
 echo -e "\n${CIANO}[4/6] Installazione di PyTorch (torch, torchvision)...${RESET}"
 echo -e "${GIALLO}Questa operazione potrebbe richiedere diversi minuti a seconda della connessione internet...${RESET}"
-./venv/bin/python -m pip install torch torchvision --index-url "$indice_torch"
+installa_pacchetto torch       --index-url "$indice_torch"
+installa_pacchetto torchvision --index-url "$indice_torch"
 
-# 6. Installazione degli altri pacchetti base da requirements.txt
-#    (torch/torchvision gia' installati dalla index CUDA/CPU corretta: pip li
-#    vedra' gia' soddisfatti. Per aggiungere una dipendenza basta requirements.txt,
-#    senza toccare questo script.)
+# 6. Installazione degli altri pacchetti da requirements.txt, uno alla volta: cosi' ogni
+#    "✅ <pkg> installato correttamente" compare nel punto esatto in cui quel pacchetto
+#    viene installato. torch/torchvision sono gia' stati messi allo step precedente dalla
+#    index CUDA/CPU corretta e vengono saltati qui. Per aggiungere una dipendenza basta
+#    requirements.txt, senza toccare questo script.
 echo -e "\n${CIANO}[5/6] Installazione dei pacchetti base da requirements.txt (Whisper, Streamlit, OpenCV, ChromaDB)...${RESET}"
-./venv/bin/python -m pip install -r requirements.txt
+while IFS= read -r riga || [ -n "$riga" ]; do
+    riga="${riga%$'\r'}"          # via eventuale CR (file salvato su Windows)
+    spec="${riga%%#*}"            # via commento (a inizio riga o in coda)
+    read -r spec <<< "$spec" || true   # trim spazi iniziali/finali
+    [ -z "$spec" ] && continue
+    nome="${spec%%[<>=!~; ]*}"
+    if [ "$nome" = torch ] || [ "$nome" = torchvision ]; then continue; fi
+    installa_pacchetto "$spec"
+done < requirements.txt
 
 # 7. Installazione modelli local-only no-deps
 echo -e "\n${CIANO}[6/6] Installazione di facenet-pytorch (--no-deps, per evitare NumPy < 2.0)...${RESET}"
-./venv/bin/python -m pip install facenet-pytorch --no-deps
+installa_pacchetto facenet-pytorch --no-deps
 
 echo -e "\n${VERDE}==========================================================${RESET}"
 echo -e "${VERDE} INSTALLAZIONE COMPLETATA CON SUCCESSO!${RESET}"
