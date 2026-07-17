@@ -1,4 +1,4 @@
-# Imposta la directory di lavoro sulla cartella radice del progetto
+﻿# Imposta la directory di lavoro sulla cartella radice del progetto
 # (questo script vive in .\scripts\windows\, quindi si risale di due livelli).
 # Cosi' venv, requirements.txt e i sorgenti vengono trovati indipendentemente da
 # dove viene lanciato lo script.
