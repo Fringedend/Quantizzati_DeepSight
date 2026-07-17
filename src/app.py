@@ -1427,12 +1427,17 @@ elif menu == "🖼️ Galleria":
                         </div>
                         """, unsafe_allow_html=True)
 
+                        # Come nella dashboard: le immagini mostrano la foto vera ridotta
+                        # al volo (nitida) e i video un vero player riproducibile; la
+                        # miniatura da 300px resta solo come ripiego se l'originale manca.
                         if elemento["media_type"] == "image" and os.path.exists(elemento["file_path"]):
                             st.image(immagine_per_display(elemento["file_path"], lato_max=1000), width="stretch")
+                        elif elemento["media_type"] == "video" and os.path.exists(elemento["file_path"]):
+                            mostra_player_video(elemento["file_path"])
                         else:
                             percorso_anteprima = percorso_anteprima_elemento(elemento["file_path"])
-                            if percorso_anteprima:
-                                st.image(percorso_anteprima, width="stretch")
+                            if percorso_anteprima and os.path.exists(percorso_anteprima):
+                                st.image(immagine_per_display(percorso_anteprima, lato_max=1000), width="stretch")
 
                         with st.expander("Azioni e Dettagli"):
                             st.write(f"**Dimensione:** {ottieni_stringa_dimensione_file(elemento['file_size'] or 0)}")
@@ -1443,9 +1448,6 @@ elif menu == "🖼️ Galleria":
                                     f'<span class="tag-pill">{tag}</span>' for tag in elemento["objects"]
                                 )
                                 st.markdown(tag_html, unsafe_allow_html=True)
-
-                            if elemento["media_type"] == "video" and os.path.exists(elemento["file_path"]):
-                                mostra_player_video(elemento["file_path"])
 
                             if os.path.exists(elemento["file_path"]):
                                 bottone_scarica(elemento["file_path"], elemento["filename"],
