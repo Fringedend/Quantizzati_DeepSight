@@ -285,6 +285,28 @@ st.markdown("""
         transform: translateY(-1px);
     }
 
+    /* Pulsante "Elimina selezionati" della galleria: rosso (palette pericolo) invece del blu,
+       e acceso solo con una selezione. Senza selezione Streamlit lo disabilita: lo mostriamo
+       spento (grigio, senza bagliore). Il doppio attributo alza la specificità sopra
+       `div[data-testid="stColumn"] button[kind="primary"]` (che altrimenti lo colora di blu). */
+    .st-key-gal_elimina_sel button[data-testid][kind="primary"] {
+        background: var(--gradiente-pericolo) !important;
+        border: none !important;
+        color: white !important;
+        box-shadow: 0 4px 15px rgba(var(--accento-pericolo-rgb), 0.35) !important;
+    }
+    .st-key-gal_elimina_sel button[data-testid][kind="primary"]:hover {
+        box-shadow: 0 6px 20px rgba(var(--accento-pericolo-rgb), 0.5) !important;
+        transform: translateY(-1px);
+    }
+    .st-key-gal_elimina_sel button[data-testid][kind="primary"]:disabled {
+        background: var(--superficie) !important;
+        border: 1px solid var(--bordo) !important;
+        color: inherit !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+
     /* Comparsa dell'icona sulla voce di navbar attiva. L'icona (icon= => stIconEmoji) esiste
        solo sul pulsante attivo: essendo un nodo DOM creato al momento dell'attivazione,
        questa keyframe parte al montaggio e si rigioca ogni volta che si cambia sezione.
@@ -1361,7 +1383,7 @@ elif menu == "🖼️ Galleria":
                 except Exception as errore:
                     st.error(f"Impossibile creare lo ZIP: {errore}")
         col_del.button("Elimina selezionati", type="primary", width="stretch",
-                       disabled=not selezionati,
+                       key="gal_elimina_sel", disabled=not selezionati,
                        on_click=richiedi_conferma_eliminazione, args=(selezionati,))
 
         percorso_zip = st.session_state.get("galleria_zip_path")
