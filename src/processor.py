@@ -232,17 +232,23 @@ def estrai_audio_video(percorso_video):
         print(f"Estrazione audio tramite FFmpeg fallita: {errore}")
         return None
 
-# Categorie comuni per la classificazione zero-shot di CLIP
+# Categorie per i tag zero-shot (coseno tra embedding Qwen dell'immagine e del testo).
+# In italiano, coerenti con la lingua dell'app. Dopo una modifica a questa lista,
+# rilanciare src/ricalcola_tag.py per riclassificare l'archivio esistente.
 CATEGORIE = [
-    "person", "man", "woman", "child", "family", "group of people",
-    "dog", "cat", "bird", "horse", "animal", "pet",
-    "car", "motorcycle", "bicycle", "truck", "airplane", "boat", "vehicle",
-    "building", "house", "office", "street", "road", "city",
-    "nature", "tree", "forest", "flower", "garden", "grass",
-    "mountain", "hill", "beach", "sea", "ocean", "river", "lake", "water",
-    "sunset", "sunrise", "sky", "cloud", "snow", "ice",
-    "food", "beverage", "fruit", "dinner", "interior", "living room", "kitchen",
-    "document", "text", "book", "computer", "phone", "sports", "art"
+    "persona", "uomo", "donna", "bambino", "famiglia", "gruppo di persone",
+    "cane", "gatto", "uccello", "cavallo", "animale", "animale domestico",
+    "automobile", "motocicletta", "bicicletta", "camion", "aereo", "barca", "veicolo",
+    "edificio", "casa", "ufficio", "strada", "città",
+    "natura", "albero", "foresta", "fiore", "giardino", "prato",
+    "montagna", "collina", "spiaggia", "mare", "fiume", "lago", "acqua",
+    "tramonto", "alba", "cielo", "nuvola", "neve", "ghiaccio",
+    "cibo", "bevanda", "frutta", "cena", "interno", "soggiorno", "cucina",
+    "documento", "testo", "libro", "computer", "telefono", "sport", "arte",
+    # Aggiunte rispetto alla lista originale dell'era CLIP
+    "matrimonio", "compleanno", "festa", "concerto", "selfie", "screenshot",
+    "neonato", "chiesa", "museo", "castello", "treno", "aeroporto", "piscina",
+    "fuochi d'artificio", "disegno", "notte",
 ]
 
 _embedding_categorie_precomputati = None
@@ -252,7 +258,7 @@ def _embedding_categorie(qwen):
     global _embedding_categorie_precomputati
     if _embedding_categorie_precomputati is None:
         _embedding_categorie_precomputati = [
-            (cat, qwen.ottieni_embedding_testo(f"a photo of a {cat}", con_istruzione=False))
+            (cat, qwen.ottieni_embedding_testo(f"una foto di {cat}", con_istruzione=False))
             for cat in CATEGORIE
         ]
     return _embedding_categorie_precomputati
