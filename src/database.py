@@ -21,8 +21,11 @@ def ottieni_connessione():
     """Restituisce una connessione al database SQLite locale."""
     connessione = sqlite3.connect(config.PERCORSO_DB)
     connessione.execute("PRAGMA foreign_keys = ON;")
-    # worker scrive spesso + UI legge/scrive: WAL evita "database is locked"
+    # WAL fa coesistere UN lettore e UNO scrittore, ma NON serializza due scrittori:
+    # con worker in background + UI che scrivono, il secondo scrittore fallirebbe
+    # subito con "database is locked". busy_timeout lo fa aspettare il lock invece.
     connessione.execute("PRAGMA journal_mode=WAL;")
+    connessione.execute(f"PRAGMA busy_timeout={config.SQLITE_BUSY_TIMEOUT_MS};")
     return connessione
 
 def inizializza_db():

@@ -5,6 +5,7 @@ import datetime
 import subprocess
 import tempfile
 import threading
+import socket
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
@@ -236,15 +237,15 @@ def estrai_audio_video(percorso_video):
 # In italiano, coerenti con la lingua dell'app. Dopo una modifica a questa lista,
 # rilanciare src/ricalcola_tag.py per riclassificare l'archivio esistente.
 CATEGORIE = [
-    "persona", "uomo", "donna", "bambino", "famiglia", "gruppo di persone",
-    "cane", "gatto", "uccello", "cavallo", "animale", "pesce", "rettile", "insetto",
+    "uomo", "donna", "bambino", "famiglia", "gruppo di persone", "paesaggio",
+    "cane", "gatto", "uccello", "cavallo", "animale", "pesce", "rettile", "insetto", "fantasy", "robot", "alieno", "mostro", "fantasma",
     "automobile", "motocicletta", "bicicletta", "camion", "aereo", "barca", "veicolo",
     "edificio", "casa", "ufficio", "strada", "città",
     "natura", "albero", "foresta", "fiore", "giardino", "prato",
     "montagna", "collina", "spiaggia", "mare", "fiume", "lago", "acqua",
-    "tramonto", "alba", "cielo", "nuvola", "neve", "ghiaccio",
-    "cibo", "bevanda", "frutta", "cena", "interno", "cucina",
-    "documento", "testo", "libro", "computer", "telefono", "sport", "arte",
+    "tramonto", "alba", "cielo", "nuvola", "neve", "ghiaccio", "pioggia", "temporale", "arcobaleno",
+    "cibo", "bevanda", "frutta", "cena", "interno", "cucina", "ristorante",
+    "documento", "testo", "libro", "computer", "telefono", "sport", "arte", "videogioco", "musica", "strumento musicale",
     # Aggiunte rispetto alla lista originale dell'era CLIP
     "matrimonio", "compleanno", "festa", "concerto", "selfie", "screenshot",
     "neonato", "chiesa", "museo", "castello", "treno", "aeroporto", "piscina",
@@ -453,8 +454,40 @@ _lock_lavoratore = threading.Lock()
 _sveglia = threading.Event()
 _stato_runtime = {"in_corso": None, "durate": []}  # durate: ultimi secondi/elemento per l'ETA
 
+_socket_istanza = None      # tiene vivo il bind della porta per tutta la vita del processo
+_istanza_primaria = None    # None = non ancora verificato; poi True/False (cache per-processo)
+
+def e_istanza_primaria():
+    """True se questo processo e' l'unica istanza di DeepSight in esecuzione.
+
+    Usa il bind di una porta locale come mutex cross-platform: la prima istanza
+    la occupa, una seconda fallisce il bind (porta gia' in uso) e sa di essere un
+    doppione. Due istanze condividerebbero lo stesso DB SQLite e la stessa porta di
+    llama-server (8091): i due worker prenderebbero gli stessi elementi dalla coda
+    corrompendo i riferimenti (FOREIGN KEY) e contendendo le scritture. Il socket
+    resta aperto per tutta la vita del processo e si libera da solo all'uscita (niente
+    file di lock rimasti "appesi" dopo un crash)."""
+    global _socket_istanza, _istanza_primaria
+    if _istanza_primaria is not None:
+        return _istanza_primaria
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # NIENTE SO_REUSEADDR: vogliamo proprio che il secondo bind fallisca.
+        s.bind((config.QWEN_HOST, config.PORTA_ISTANZA_SINGOLA))
+        s.listen(1)
+        _socket_istanza = s          # mantiene la porta occupata
+        _istanza_primaria = True
+    except OSError:
+        s.close()
+        _istanza_primaria = False
+    return _istanza_primaria
+
 def avvia_lavoratore():
-    """Avvia (una sola volta per processo) il thread della coda e lo sveglia."""
+    """Avvia (una sola volta per processo) il thread della coda e lo sveglia.
+    Solo l'istanza primaria elabora la coda: una seconda istanza non deve avviare
+    un secondo worker (corromperebbe la coda e collide su llama-server:8091)."""
+    if not e_istanza_primaria():
+        return
     global _lavoratore
     with _lock_lavoratore:
         if _lavoratore is None or not _lavoratore.is_alive():
@@ -501,45 +534,65 @@ _STADI = (("stato_embedding", "embedding", _stadio_embedding),
           ("stato_volti", "volti", _stadio_volti),
           ("stato_trascrizione", "trascrizione", _stadio_trascrizione))
 
+def _scrittura_best_effort(azione, descrizione):
+    """Scrittura di stato 'best-effort' dal worker: un fallimento (tipicamente un
+    lock transitorio) viene loggato ma NON propaga, cosi' non uccide il thread.
+    Senza questa rete, un errore dentro il gestore-errori faceva morire il worker,
+    che veniva poi riavviato ad ogni rerun di Streamlit ricaricando i modelli."""
+    try:
+        azione()
+    except Exception as errore:
+        print(f"Impossibile aggiornare lo stato ({descrizione}): {errore}")
+
 def _ciclo_lavoratore():
     import time
     while True:
-        if database.leggi_impostazione("coda_in_pausa", "0") == "1":
-            _sveglia.clear()
-            _sveglia.wait(timeout=2.0)
-            continue
-        elemento = database.prossimo_media_in_coda()
-        if elemento is None:
-            _sveglia.clear()
-            _sveglia.wait(timeout=2.0)
-            continue
-
-        inizio = time.monotonic()
         try:
-            if elemento["processed"] == 0:
-                _stato_runtime["in_corso"] = f"{elemento['filename']} · preparazione"
-                _prepara_media(elemento)
-            else:
-                for colonna, etichetta, stadio in _STADI:
-                    if elemento[colonna] != 0:
-                        continue
-                    if database.leggi_impostazione("coda_in_pausa", "0") == "1":
-                        break  # pausa tra gli stadi: l'elemento restera' in coda
-                    _stato_runtime["in_corso"] = f"{elemento['filename']} · {etichetta}"
-                    try:
-                        stadio(elemento)
-                        database.imposta_stato_stadio(elemento["id"], colonna, 1)
-                    except Exception as errore:
-                        print(f"Stadio {colonna} fallito per {elemento['filename']}: {errore}")
-                        database.imposta_stato_stadio(elemento["id"], colonna, -1)
+            if database.leggi_impostazione("coda_in_pausa", "0") == "1":
+                _sveglia.clear()
+                _sveglia.wait(timeout=2.0)
+                continue
+            elemento = database.prossimo_media_in_coda()
+            if elemento is None:
+                _sveglia.clear()
+                _sveglia.wait(timeout=2.0)
+                continue
+
+            inizio = time.monotonic()
+            try:
+                if elemento["processed"] == 0:
+                    _stato_runtime["in_corso"] = f"{elemento['filename']} · preparazione"
+                    _prepara_media(elemento)
+                else:
+                    for colonna, etichetta, stadio in _STADI:
+                        if elemento[colonna] != 0:
+                            continue
+                        if database.leggi_impostazione("coda_in_pausa", "0") == "1":
+                            break  # pausa tra gli stadi: l'elemento restera' in coda
+                        _stato_runtime["in_corso"] = f"{elemento['filename']} · {etichetta}"
+                        try:
+                            stadio(elemento)
+                            database.imposta_stato_stadio(elemento["id"], colonna, 1)
+                        except Exception as errore:
+                            print(f"Stadio {colonna} fallito per {elemento['filename']}: {errore}")
+                            _scrittura_best_effort(
+                                lambda e=elemento, c=colonna: database.imposta_stato_stadio(e["id"], c, -1),
+                                f"{colonna}=-1 per {elemento['filename']}")
+            except Exception as errore:
+                print(f"Preparazione fallita per {elemento['filename']}: {errore}")
+                _scrittura_best_effort(
+                    lambda: database.aggiorna_stato_elaborazione(id_media=elemento["id"], stato_elaborazione=-1),
+                    f"processed=-1 per {elemento['filename']}")
+            finally:
+                _stato_runtime["in_corso"] = None
+                durate = _stato_runtime["durate"]
+                durate.append(time.monotonic() - inizio)
+                del durate[:-20]  # media mobile sugli ultimi 20 elementi
         except Exception as errore:
-            print(f"Preparazione fallita per {elemento['filename']}: {errore}")
-            database.aggiorna_stato_elaborazione(id_media=elemento["id"], stato_elaborazione=-1)
-        finally:
-            _stato_runtime["in_corso"] = None
-            durate = _stato_runtime["durate"]
-            durate.append(time.monotonic() - inizio)
-            del durate[:-20]  # media mobile sugli ultimi 20 elementi
+            # Rete di sicurezza esterna: nemmeno un errore inatteso (es. in
+            # prossimo_media_in_coda / leggi_impostazione) deve uccidere il worker.
+            print(f"Errore imprevisto nel worker della coda (ignorato): {errore}")
+            _sveglia.wait(timeout=2.0)
 
 def scansiona_cartella_condivisa(percorso_cartella):
     """Scansiona una cartella condivisa per individuare nuovi file da elaborare ed importare."""

@@ -26,6 +26,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Istanza singola: due processi DeepSight condividerebbero lo stesso DB SQLite e la
+# stessa porta di llama-server (8091), con due worker che elaborano gli stessi elementi
+# della coda corrompendo i riferimenti (FOREIGN KEY) e contendendo le scritture. Se
+# un'altra istanza è già attiva, questa si ferma subito qui.
+if not processor.e_istanza_primaria():
+    st.error("⚠️ DeepSight è già in esecuzione in un'altra finestra o processo. "
+             "Chiudi l'altra istanza prima di aprirne una nuova, per evitare "
+             "conflitti sul database e sui modelli AI.")
+    st.stop()
+
 # Inizializza il database locale all'avvio — UNA volta per processo, non a ogni
 # rerun: Streamlit riesegue tutto lo script a ogni click, e ripetere CREATE TABLE,
 # check migrazione e i count() Chroma allunga ogni interazione.

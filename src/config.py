@@ -41,6 +41,14 @@ QWEN_THREADS = max(1, (os.cpu_count() or 2) - 1)
 # di llama-server lo ignora comunque, e se l'avvio GPU fallisce si ripiega su CPU.
 QWEN_NGL = 99
 DIM_EMBEDDING_QWEN = 2048  # 2B = 2048-d; NON mescolare con modelli di dimensione diversa
+# Porta locale usata SOLO come mutex di istanza singola: la prima istanza di DeepSight
+# la occupa, una seconda fallisce il bind e capisce di essere un doppione (vedi
+# processor.e_istanza_primaria). Nessun traffico ci passa sopra. Diversa da QWEN_PORT.
+PORTA_ISTANZA_SINGOLA = 8092
+# Attesa massima (ms) di una scrittura SQLite prima di fallire con "database is locked".
+# Worker in background e UI scrivono entrambi e WAL da solo NON serializza gli scrittori:
+# il busy_timeout fa aspettare il lock invece di fallire subito (vedi ottieni_connessione).
+SQLITE_BUSY_TIMEOUT_MS = 30000
 # Istruzione di retrieval per le QUERY testuali (i documenti/immagini NON ricevono istruzione).
 # IN ITALIANO di proposito: la lingua dell'istruzione dice al modello in che lingua
 # aspettarsi la query. Con l'istruzione in inglese "Cane" veniva letto come la parola
