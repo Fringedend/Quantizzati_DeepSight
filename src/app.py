@@ -428,9 +428,10 @@ st.markdown("""
         object-fit: cover;
         border-radius: var(--raggio-md);
     }
-    /* Anche il player video inline della dashboard segue il quadrato
-       (resta riproducibile: è ritagliato, non deformato) */
-    .st-key-dashboard_griglia video[data-testid="stVideo"] {
+    /* Anche il player video inline (dashboard E galleria) segue il quadrato,
+       così sta nella stessa card delle immagini (resta riproducibile: è
+       ritagliato, non deformato). */
+    :is(.st-key-dashboard_griglia, .st-key-galleria_griglia) video[data-testid="stVideo"] {
         aspect-ratio: 1 / 1;
         object-fit: cover;
         border-radius: var(--raggio-md);
@@ -438,12 +439,12 @@ st.markdown("""
     /* A schermo intero il video resta figlio della griglia, quindi le regole di ritaglio
        qui sopra continuerebbero ad applicarsi: il filmato apparirebbe croppato e con gli
        angoli arrotondati. Vanno annullate esplicitamente. */
-    .st-key-dashboard_griglia video[data-testid="stVideo"]:fullscreen {
+    :is(.st-key-dashboard_griglia, .st-key-galleria_griglia) video[data-testid="stVideo"]:fullscreen {
         aspect-ratio: auto;
         object-fit: contain;
         border-radius: 0;
     }
-    .st-key-dashboard_griglia video[data-testid="stVideo"]:-webkit-full-screen {
+    :is(.st-key-dashboard_griglia, .st-key-galleria_griglia) video[data-testid="stVideo"]:-webkit-full-screen {
         aspect-ratio: auto;
         object-fit: contain;
         border-radius: 0;
