@@ -137,11 +137,22 @@ st.markdown("""
         position: sticky;
         top: 3.75rem;
         z-index: 99;
+        padding: 0.5rem 0;
+        /* Nessuno sfondo/capsula qui: la barra non è più a tutta larghezza. La pill è
+           disegnata solo attorno alle voci (.st-key-navbar_voci), piccola e centrata, e
+           lo scudo le sta accanto fuori dalla capsula. */
+    }
+    /* La capsula (pill) tonda come Google Foto: avvolge SOLO le voci, si stringe al loro
+       contenuto (width='content') e resta centrata nella riga. Sfondo traslucido + blur così
+       il contenuto che scorre dietro resta leggibile su tema chiaro e scuro. */
+    .st-key-navbar_voci {
         background: var(--superficie);
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
-        padding: 0.5rem 0.6rem;
-        border-radius: var(--raggio-md);
+        border: 1px solid var(--bordo);
+        border-radius: 999px;
+        padding: 0.3rem 0.5rem;
+        box-shadow: 0 6px 24px var(--ombra-card);
     }
 
     /* Stile dei titoli */
@@ -272,6 +283,39 @@ st.markdown("""
     div[data-testid="stColumn"] button[kind="primary"]:hover {
         box-shadow: 0 6px 20px rgba(var(--accent-2-rgb), 0.5) !important;
         transform: translateY(-1px);
+    }
+
+    /* Comparsa dell'icona sulla voce di navbar attiva. L'icona (icon= => stIconEmoji) esiste
+       solo sul pulsante attivo: essendo un nodo DOM creato al momento dell'attivazione,
+       questa keyframe parte al montaggio e si rigioca ogni volta che si cambia sezione.
+       Curva con leggero overshoot per un piccolo "pop", come nella navbar di Google Foto. */
+    @keyframes comparsa-icona-nav {
+        from { opacity: 0; transform: translateX(-8px) scale(0.5); }
+        to   { opacity: 1; transform: translateX(0) scale(1); }
+    }
+    .st-key-navbar button [data-testid="stIconEmoji"] {
+        animation: comparsa-icona-nav 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+
+    /* Il margine sotto (15px, globale sui pulsanti in colonna) va azzerato nella navbar, così
+       le voci restano centrate in verticale nella capsula; il gruppo orizzontale (navbar_voci)
+       affianca i pulsanti stringendoli al contenuto, come i segmenti di Google Foto. */
+    .st-key-navbar div[data-testid="stColumn"] button {
+        margin-bottom: 0 !important;
+    }
+    /* Voci non attive: niente bordo né riempimento, solo testo sulla capsula (come Google
+       Foto). Al passaggio del mouse compare solo un leggero sfondo, sempre senza bordo. Lo
+       scudo NON è toccato (vive in col_scudo, fuori da navbar_voci): resta un pulsante pieno. */
+    .st-key-navbar_voci [data-testid="stButton"] button[kind="secondary"] {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    .st-key-navbar_voci [data-testid="stButton"] button[kind="secondary"]:hover {
+        background: rgba(var(--accent-1-rgb), 0.10) !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: var(--accent-testo) !important;
     }
 
     /* Barra laterale: sfondo sfumato e bordo di separazione */
@@ -531,11 +575,16 @@ st.markdown("""
         line-height: 1 !important;
     }
 
-    /* Pulsante scudo del controllo integrità, nella navbar. Come per il "+", il pannello
-       a comparsa vive in un portale fuori dal container: questi stili toccano solo il bottone. */
+    /* Pulsante scudo del controllo integrità: sta FUORI dalla pill, subito a destra, come un
+       pulsante satellite tondo (la lente di Google Foto). Senza problemi è un cerchio da 48px;
+       col badge del conteggio si allunga a pillola. Stesso bordo/ombra della pill così i due
+       elementi sembrano fratelli. Come per il "+", il pannello a comparsa vive in un portale
+       fuori dal container: questi stili toccano solo il bottone. */
     .st-key-nav_integrita button {
-        height: 100%;
-        border-radius: var(--raggio-sm) !important;
+        height: 48px !important;
+        min-width: 48px !important;
+        border-radius: 999px !important;
+        box-shadow: 0 6px 24px var(--ombra-card) !important;
     }
     .st-key-nav_integrita button div:has(> span > [data-testid="stIconMaterial"]) { display: none; }
     /* Con problemi rilevati il pulsante diventa 'primary': accento ambra→rosso per farsi notare.
@@ -640,6 +689,13 @@ def ottieni_stringa_dimensione_file(dimensione_in_byte):
             return f"{dimensione_in_byte:.2f} {unita}"
         dimensione_in_byte /= 1024.0
     return f"{dimensione_in_byte:.2f} TB"
+
+def estensione_file(elemento):
+    """Estensione del file in MAIUSCOLO senza punto (es. 'JPG', 'MP4') per le card.
+    I file in archivio sono nominati <hash><ext>, quindi l'estensione è quella reale.
+    Ripiega su '—' se manca (nome senza estensione)."""
+    nome = elemento.get("filename") or elemento.get("file_path") or ""
+    return os.path.splitext(nome)[1].lstrip(".").upper() or "—"
 
 def apri_cartella(percorso):
     """Apre una cartella nel gestore file del sistema. Ritorna True se riuscito.
@@ -1052,14 +1108,17 @@ if esito_eliminazione:
 
 contenitore_navbar = st.container(key="navbar")
 with contenitore_navbar:
-    col_nav1, col_nav2, col_nav3, col_nav4, col_nav5 = st.columns([1, 1, 1, 1, 0.35])
+    # Colonna unica a tutta larghezza: serve solo perché i pulsanti restino discendenti di
+    # uno stColumn, da cui ereditano lo stile globale dei pulsanti navbar (raggio, altezza,
+    # gradiente dell'attivo). Toglierla li farebbe tornare pulsanti Streamlit di default.
+    (col_nav,) = st.columns(1)
 
-# (etichetta, key, colonna): l'etichetta è anche il valore salvato in selezione_menu.
+# (etichetta, key): l'etichetta è anche il valore salvato in selezione_menu.
 voci_navbar = [
-    ("📊 Dashboard", "nav_dash", col_nav1),
-    ("🖼️ Galleria", "nav_gallery", col_nav2),
-    ("🔍 Ricerca Avanzata", "nav_search", col_nav3),
-    ("👤 Persone", "nav_persone", col_nav4),
+    ("📊 Dashboard", "nav_dash"),
+    ("🖼️ Galleria", "nav_gallery"),
+    ("🔍 Ricerca Avanzata", "nav_search"),
+    ("👤 Persone", "nav_persone"),
 ]
 # on_click (non if button + st.rerun): il callback aggiorna lo stato PRIMA del rerun
 # innescato dal click, quindi basta UNA esecuzione dello script per cambiare pagina
@@ -1067,21 +1126,32 @@ voci_navbar = [
 def _vai_a_pagina(etichetta):
     st.session_state.selezione_menu = etichetta
 
-for etichetta, key, colonna in voci_navbar:
-    attivo = st.session_state.selezione_menu == etichetta
-    colonna.button(etichetta, width='stretch', key=key,
-                   type="primary" if attivo else "secondary",
-                   on_click=_vai_a_pagina, args=(etichetta,))
-
-# Scudo: apre il controllo integrità in un pannello a comparsa. Il badge mostra quanti
-# problemi sono stati rilevati (file intrusi + record orfani).
-with col_nav5:
-    with st.container(key="nav_integrita"):
-        etichetta_scudo = f"🛡️ {n_problemi}" if n_problemi else "🛡️"
-        with st.popover(etichetta_scudo, width='stretch',
-                        help="Controllo integrità archivio",
-                        type="primary" if n_problemi else "secondary"):
-            pannello_integrita(file_intrusi, record_orfani)
+# Riga orizzontale centrata: la pill delle voci (si stringe al contenuto, `navbar_voci`) e —
+# subito a destra, FUORI dalla pill — lo scudo del controllo integrità, come la lente di
+# Google Foto. La capsula/sfondo è disegnata dal CSS solo attorno a `navbar_voci`.
+with col_nav:
+    with st.container(key="navbar_riga", horizontal=True, horizontal_alignment="center",
+                      vertical_alignment="center", gap="small"):
+        with st.container(key="navbar_voci", horizontal=True, gap="small", width="content"):
+            for etichetta, key in voci_navbar:
+                attivo = st.session_state.selezione_menu == etichetta
+                # L'icona (emoji iniziale) compare solo sulla voce attiva; le altre restano
+                # solo testo. `etichetta` resta il valore completo per il routing e per
+                # on_click; a schermo si mostra solo il testo. L'icona è passata come `icon=`
+                # (elemento DOM separato): è un nodo nuovo a ogni attivazione, così
+                # l'animazione CSS di comparsa parte al montaggio.
+                icona, testo = etichetta.split(" ", 1)
+                st.button(testo, icon=icona if attivo else None, width='content', key=key,
+                          type="primary" if attivo else "secondary",
+                          on_click=_vai_a_pagina, args=(etichetta,))
+        # Scudo: fuori dalla pill, subito a destra. Il badge mostra quanti problemi sono
+        # stati rilevati (file intrusi + record orfani).
+        with st.container(key="nav_integrita", width="content"):
+            etichetta_scudo = f"🛡️ {n_problemi}" if n_problemi else "🛡️"
+            with st.popover(etichetta_scudo, width='stretch',
+                            help="Controllo integrità archivio",
+                            type="primary" if n_problemi else "secondary"):
+                pannello_integrita(file_intrusi, record_orfani)
 
 # --- PULSANTE FLOTTANTE "+" (in basso a destra, visibile su ogni pagina) ---
 # Apre le opzioni di caricamento: la pagina Caricamento non è più nella navbar.
@@ -1169,7 +1239,7 @@ if menu == "📊 Dashboard":
                         <div class="result-meta">
                             <div class="result-title">{nome_file}</div>
                             <div style="opacity:0.7; font-size:0.8rem;">
-                                Tipo: {elemento['media_type'].upper()} | {elemento['width']}x{elemento['height']} <br>
+                                {estensione_file(elemento)} | {elemento['width']}x{elemento['height']} <br>
                                 📅 {elemento['creation_date'].split('T')[0] if elemento['creation_date'] else 'N/D'} &nbsp;·&nbsp; 📍 {elemento.get('location_name') or 'N/D'}
                             </div>
                         </div>
@@ -1191,6 +1261,11 @@ elif menu == "🖼️ Galleria":
     st.markdown("<p class='subtitle'>Sfoglia tutti gli elementi dell'archivio, senza bisogno di una ricerca</p>", unsafe_allow_html=True)
 
     elementi_galleria = database.ottieni_tutti_elementi_multimediali(solo_elaborati=True)
+    # I tag stanno sui frame, non su media_items: li recupero in blocco e li innesto in
+    # ogni elemento (chiave "objects", come nei risultati di ricerca) per mostrarli in card.
+    tag_per_media = database.ottieni_tag_per_media()
+    for _elem in elementi_galleria:
+        _elem["objects"] = tag_per_media.get(_elem["id"], [])
     if not elementi_galleria:
         st.info("Nessun elemento presente nell'archivio. Vai alla scheda 'Caricamento' per importare contenuti.")
     else:
@@ -1325,7 +1400,7 @@ elif menu == "🖼️ Galleria":
                             <div class="result-meta">
                                 <div class="result-title" title="{elemento['filename']}">{elemento['filename']}</div>
                                 <div style="opacity:0.7; font-size:0.8rem;">
-                                    Tipo: {elemento['media_type'].upper()} | {elemento['width']}x{elemento['height']} <br>
+                                    {estensione_file(elemento)} | {elemento['width']}x{elemento['height']} <br>
                                     📅 {elemento['creation_date'].split('T')[0] if elemento['creation_date'] else 'N/D'} &nbsp;·&nbsp; 📍 {elemento.get('location_name') or 'N/D'}
                                 </div>
                             </div>
@@ -1340,8 +1415,14 @@ elif menu == "🖼️ Galleria":
                                 st.image(percorso_anteprima, width="stretch")
 
                         with st.expander("Azioni e Dettagli"):
-                            st.write(f"**Percorso file:** `{elemento['file_path']}`")
                             st.write(f"**Dimensione:** {ottieni_stringa_dimensione_file(elemento['file_size'] or 0)}")
+
+                            if elemento.get("objects"):
+                                st.markdown("**Tag rilevati:**")
+                                tag_html = "".join(
+                                    f'<span class="tag-pill">{tag}</span>' for tag in elemento["objects"]
+                                )
+                                st.markdown(tag_html, unsafe_allow_html=True)
 
                             if elemento["media_type"] == "video" and os.path.exists(elemento["file_path"]):
                                 mostra_player_video(elemento["file_path"])
@@ -1375,21 +1456,31 @@ elif menu == "📤 Caricamento & Import":
     modalita_caricamento = st.session_state.get("modalita_caricamento", "file")
 
     if modalita_caricamento == "file":
+        # Esito dell'ultimo caricamento: emesso qui perché, per svuotare l'uploader, dopo
+        # l'elaborazione si cambia la sua key e si fa st.rerun(), che però scarta i messaggi
+        # del run in cui l'azione è avvenuta (stesso schema del controllo integrità).
+        esito_caricamento = st.session_state.pop("esito_caricamento", None)
+        if esito_caricamento:
+            st.toast(esito_caricamento["testo"], icon=esito_caricamento["icona"])
+
+        # Key dinamica (nonce): incrementandola dopo l'elaborazione, Streamlit crea un
+        # uploader nuovo e vuoto, così i file inseriti scompaiono.
+        nonce_uploader = st.session_state.get("nonce_uploader", 0)
         file_caricati = st.file_uploader(
-            "Seleziona Immagini o Video da importare", 
+            "Seleziona Immagini o Video da importare",
             type=["jpg", "jpeg", "png", "mp4", "avi", "mov", "mkv", "gif"],
-            accept_multiple_files=True
+            accept_multiple_files=True,
+            key=f"uploader_file_{nonce_uploader}",
         )
-        
+
         if file_caricati:
             st.markdown(f"**Selezionati {len(file_caricati)} file.** Clicca sul pulsante in basso per avviare l'elaborazione locale.")
             if st.button("Elabora e Aggiungi all'Archivio"):
-                area_log = st.empty()
-
                 # FASE 1 (sincrona, veloce): registra subito TUTTO il lotto (copia in
                 # archivio + record processed=0). Così il conteggio "file in coda"
                 # della dashboard riflette l'intero caricamento.
                 lotto = []  # (nome_file, id_media, percorso_archiviato, tipo_media)
+                errori_registrazione = []
                 with st.spinner(f"Registrazione di {len(file_caricati)} file nell'archivio..."):
                     for file_oggetto in file_caricati:
                         # Salva il file temporaneamente su disco per passarlo alla pipeline
@@ -1400,7 +1491,7 @@ elif menu == "📤 Caricamento & Import":
                                 f.write(file_oggetto.read())
                             lotto.append((file_oggetto.name,) + processor.registra_file(percorso_temporaneo))
                         except Exception as errore:
-                            area_log.error(f"Registrazione fallita per {file_oggetto.name}: {errore}")
+                            errori_registrazione.append(f"{file_oggetto.name}: {errore}")
                         finally:
                             # La copia in archivio è già stata fatta: il temporaneo non serve più
                             if os.path.exists(percorso_temporaneo):
@@ -1410,13 +1501,21 @@ elif menu == "📤 Caricamento & Import":
                 # elementi appena registrati (processed=0) e la pagina torna subito libera.
                 if lotto:
                     processor.avvia_lavoratore()
-                    st.success(
-                        f"{len(lotto)} file registrati: elaborazione avviata in background. "
-                        "Puoi continuare a navigare, l'avanzamento e i controlli pausa/riprendi sono nella barra laterale."
-                    )
+                    testo_esito = (f"{len(lotto)} file registrati: elaborazione avviata in background. "
+                                   "Avanzamento e pausa/riprendi nella barra laterale.")
+                    icona_esito = "✅"
+                    if errori_registrazione:
+                        testo_esito += f" ({len(errori_registrazione)} non registrati)"
+                        icona_esito = "⚠️"
                 else:
-                    st.error("Nessun file registrato: controlla gli errori sopra.")
-                
+                    testo_esito = "Nessun file registrato: controlla i file e riprova."
+                    icona_esito = "⚠️"
+
+                # Salva l'esito e svuota l'uploader (nuova key) al rerun.
+                st.session_state["esito_caricamento"] = {"testo": testo_esito, "icona": icona_esito}
+                st.session_state["nonce_uploader"] = nonce_uploader + 1
+                st.rerun()
+
     else:
         st.markdown("""
         ### Scansione di una cartella di rete o locale
@@ -1508,7 +1607,7 @@ elif menu == "👤 Persone":
                         <div class="result-card"><div class="result-meta">
                             <div class="result-title" title="{elemento['filename']}">{elemento['filename']}</div>
                             <div style="opacity:0.7; font-size:0.8rem;">
-                                Tipo: {elemento['media_type'].upper()}<br>
+                                {estensione_file(elemento)}<br>
                                 📅 {elemento['creation_date'].split('T')[0] if elemento['creation_date'] else 'N/D'}</div>
                         </div></div>""", unsafe_allow_html=True)
                         if elemento["media_type"] == "image" and os.path.exists(elemento["file_path"]):
@@ -1811,7 +1910,7 @@ elif menu == "🔍 Ricerca Avanzata":
                 elif modalita == "face":
                     stringa_dettagli = "👤 Volto rilevato nell'immagine"
                 else:
-                    stringa_dettagli = "🖼️ Immagine"
+                    stringa_dettagli = f"🖼️ {estensione_file(elemento)}"
                 
                 # Rendering HTML della scheda dei risultati
                 st.markdown(f"""
@@ -1832,8 +1931,6 @@ elif menu == "🔍 Ricerca Avanzata":
                 
                 # Dettagli aggiuntivi espandibili
                 with st.expander("Azioni e Dettagli"):
-                    st.write(f"**Percorso file:** `{elemento['file_path']}`")
-
                     # Ritaglio del volto che ha prodotto la corrispondenza: nelle foto di gruppo
                     # dice QUALE dei volti presenti ha fatto match.
                     if modalita == "face" and elemento.get("crop_path") and os.path.exists(elemento["crop_path"]):

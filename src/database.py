@@ -490,6 +490,29 @@ def ottieni_tutti_elementi_multimediali(solo_elaborati=True):
     colonne = [col[0] for col in cursore.description]
     return [dict(zip(colonne, r)) for r in righe]
 
+def ottieni_tag_per_media():
+    """Ritorna {media_id: [tag, ...]} unendo i tag (media_frames.objects) di tutti i frame
+    di ogni media, deduplicati mantenendo l'ordine di prima comparsa. Una sola query per
+    tutta la galleria, invece di un'interrogazione per elemento. I tag stanno sui frame,
+    non sui media_items, perciò la galleria (che legge media_items) va arricchita a parte."""
+    connessione = ottieni_connessione()
+    cursore = connessione.cursor()
+    cursore.execute("SELECT media_id, objects FROM media_frames "
+                    "WHERE objects IS NOT NULL AND objects != ''")
+    righe = cursore.fetchall()
+    connessione.close()
+    tag_per_media = {}
+    for media_id, objects in righe:
+        try:
+            lista = json.loads(objects)
+        except Exception:
+            lista = [x.strip() for x in objects.split(",") if x.strip()]
+        accumulatore = tag_per_media.setdefault(media_id, [])
+        for tag in lista:
+            if tag not in accumulatore:
+                accumulatore.append(tag)
+    return tag_per_media
+
 def ottieni_elementi_multimediali(id_media_lista):
     """Recupera più elementi preservando l'ordine degli ID richiesti."""
     ids = list(dict.fromkeys(int(i) for i in id_media_lista))
