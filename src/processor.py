@@ -237,13 +237,13 @@ def estrai_audio_video(percorso_video):
 # rilanciare src/ricalcola_tag.py per riclassificare l'archivio esistente.
 CATEGORIE = [
     "persona", "uomo", "donna", "bambino", "famiglia", "gruppo di persone",
-    "cane", "gatto", "uccello", "cavallo", "animale", "animale domestico",
+    "cane", "gatto", "uccello", "cavallo", "animale", "pesce", "rettile", "insetto",
     "automobile", "motocicletta", "bicicletta", "camion", "aereo", "barca", "veicolo",
     "edificio", "casa", "ufficio", "strada", "città",
     "natura", "albero", "foresta", "fiore", "giardino", "prato",
     "montagna", "collina", "spiaggia", "mare", "fiume", "lago", "acqua",
     "tramonto", "alba", "cielo", "nuvola", "neve", "ghiaccio",
-    "cibo", "bevanda", "frutta", "cena", "interno", "soggiorno", "cucina",
+    "cibo", "bevanda", "frutta", "cena", "interno", "cucina",
     "documento", "testo", "libro", "computer", "telefono", "sport", "arte",
     # Aggiunte rispetto alla lista originale dell'era CLIP
     "matrimonio", "compleanno", "festa", "concerto", "selfie", "screenshot",
