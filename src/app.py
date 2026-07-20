@@ -1656,8 +1656,12 @@ elif menu == "🔍 Ricerca Avanzata":
             "L'archivio è vuoto. Carica almeno una foto, un video o una GIF "
             "prima di eseguire una ricerca."
         )
-        st.button("📤 Vai al caricamento", key="ricerca_vuota_carica", type="primary",
-                  on_click=_apri_caricamento, args=("file",))
+        # La colonna singola serve allo STILE, non al layout: il gradiente blu dei pulsanti
+        # primari è agganciato a `div[data-testid="stColumn"] button[kind="primary"]`, quindi
+        # senza un antenato stColumn il pulsante ricadrebbe sul rosso di default di Streamlit.
+        (col_btn,) = st.columns(1)
+        col_btn.button("📤 Vai al caricamento", key="ricerca_vuota_carica", type="primary",
+                       on_click=_apri_caricamento, args=("file",))
         # Non inizializzare Qwen né interrogare Chroma quando non esistono contenuti.
         st.stop()
 
