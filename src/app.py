@@ -369,6 +369,12 @@ st.markdown("""
         line-height: 1;
     }
 
+    /* Pulsante "Deploy" di Streamlit Cloud: irrilevante per un'app locale.
+       Il menù ⋮ resta (contiene lo switch del tema chiaro/scuro). */
+    [data-testid="stAppDeployButton"] {
+        display: none !important;
+    }
+
     /* Logo al centro dell'header (l'<img> base64 iniettata dopo il marchio sidebar).
        Header alto 60px, logo 44px => top 8px per il centro verticale esatto.
        Con la sidebar APERTA il logo grande è già visibile lì: questo scompare
