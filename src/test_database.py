@@ -44,11 +44,10 @@ def esegui_test():
     assert conteggi["da_preparare"] == 0 and conteggi["embedding"] == 0
 
     # persone
-    id_p = database.crea_persona()
     id_volto = database.aggiungi_volto(id_media, id_frame, "/tmp/f.jpg",
                                        np.ones(512, dtype=np.float32) / np.sqrt(512),
                                        [0, 0, 10, 10])
-    database.assegna_volto_a_persona(id_volto, id_p)
+    id_p = database.crea_persona_con_volto(id_volto)
     per_persona = database.ottieni_embedding_volti_per_persona()
     assert id_p in per_persona and len(per_persona[id_p]) == 1
     database.rinomina_persona(id_p, "Mario")

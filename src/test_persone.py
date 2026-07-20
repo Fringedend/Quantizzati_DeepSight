@@ -51,8 +51,7 @@ def esegui_test():
     # a un solo cluster, non a entrambi
     carlo = _vettore(10)
     v4 = database.aggiungi_volto(id_media, id_frame, "/tmp/c1.jpg", carlo, [0,0,1,1])
-    id_persona_carlo = database.crea_persona()
-    database.assegna_volto_a_persona(v4, id_persona_carlo)
+    id_persona_carlo = database.crea_persona_con_volto(v4)
     dora = _vettore(20)
     v5 = database.aggiungi_volto(id_media, id_frame, "/tmp/d1.jpg", dora, [0,0,1,1])
     database.assegna_volto_a_persona(v5, id_persona_carlo)  # stessa vecchia persona, basi lontane

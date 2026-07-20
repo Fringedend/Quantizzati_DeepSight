@@ -279,15 +279,6 @@ def elimina_volti_di_media(id_media):
             except OSError:
                 pass
 
-def crea_persona():
-    connessione = ottieni_connessione()
-    cursore = connessione.cursor()
-    cursore.execute("INSERT INTO persons (name) VALUES (NULL)")
-    id_persona = cursore.lastrowid
-    connessione.commit()
-    connessione.close()
-    return id_persona
-
 def crea_persona_con_volto(id_volto):
     """Crea una persona e le assegna il volto NELLA STESSA transazione: una
     persona non è mai visibile senza volti, così la potatura di ottieni_persone
