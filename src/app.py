@@ -530,8 +530,11 @@ st.markdown("""
     /* Le immagini caricate per una ricerca (immagine di query, ritagli dei volti) sono
        immagini di lavoro, non elementi d'archivio: si toglie il pulsante fullscreen che
        Streamlit sovrappone a ogni st.image, così non sono ingrandibili. Le key dei crop nei
-       dettagli sono dinamiche (indice) => match parziale. */
-    :is(.st-key-immagine_query, .st-key-volti_query, [class*="st-key-crop_volto"])
+       dettagli sono dinamiche (indice) => match parziale.
+       Stesso trattamento al logo della barra laterale (unica immagine lì dentro): è un
+       marchio, non un contenuto dell'archivio, quindi non deve essere ingrandibile. */
+    :is(.st-key-immagine_query, .st-key-volti_query, [class*="st-key-crop_volto"],
+        [data-testid="stSidebar"])
     [data-testid="stElementToolbar"] {
         display: none !important;
     }
