@@ -56,16 +56,13 @@ if "geocodifica_fatta" not in st.session_state:
 # Avvia il lavoratore della coda: riprende da solo gli elementi pendenti nel DB.
 processor.avvia_lavoratore()
 
-# --- MARCHIO (in cima alla barra laterale) ---
-# Logo blu grande e ben visibile. Il tema chiaro/scuro si cambia con lo switch NATIVO
-# di Streamlit (icona ⋮ in alto a destra -> Settings -> Appearance). Per seguirlo senza
-# doverlo rilevare (st.context.theme è inaffidabile all'istante del cambio, issue #11920),
-# i colori del CSS sono NEUTRI/traslucidi: si adattano da soli sia al tema scuro sia al chiaro.
-st.sidebar.image(PERCORSO_LOGO, width='stretch')
-st.sidebar.markdown(
-    "<h2 style='text-align:center; color:var(--accent-testo); margin-top:-6px;'>DeepSight</h2>",
-    unsafe_allow_html=True,
-)
+# --- MARCHIO (in alto a sinistra) ---
+# st.logo posiziona il marchio nell'angolo alto-sinistra: in cima alla sidebar quando è
+# aperta, nell'header quando è collassata. Il tema chiaro/scuro si cambia con lo switch
+# NATIVO di Streamlit (icona ⋮ in alto a destra -> Settings -> Appearance). Per seguirlo
+# senza doverlo rilevare (st.context.theme è inaffidabile all'istante del cambio, issue
+# #11920), i colori del CSS sono NEUTRI/traslucidi: si adattano da soli a entrambi i temi.
+st.logo(PERCORSO_LOGO, size="large")
 
 # Stile CSS personalizzato per la UI. I colori sono NEUTRI (grigi traslucidi + accenti
 # del brand), così restano leggibili su qualunque tema di Streamlit senza doverlo rilevare.
@@ -345,6 +342,12 @@ st.markdown("""
         background: var(--superficie);
         border-right: 1px solid var(--bordo);
     }
+    /* Logo (st.logo) più grande del tetto nativo di 32px. Streamlit lo rende con
+       data-testid stHeaderLogo (sidebar chiusa) o stSidebarLogo (sidebar aperta). */
+    img[data-testid="stHeaderLogo"],
+    img[data-testid="stSidebarLogo"] {
+        height: 2.75rem;
+    }
     /* Sidebar a larghezza fissa: nasconde la maniglia di trascinamento sul bordo
        (selettore sullo stile inline: le classi emotion sono hash instabili).
        Il pulsante di collasso (stSidebarCollapseButton) resta funzionante. */
@@ -530,11 +533,8 @@ st.markdown("""
     /* Le immagini caricate per una ricerca (immagine di query, ritagli dei volti) sono
        immagini di lavoro, non elementi d'archivio: si toglie il pulsante fullscreen che
        Streamlit sovrappone a ogni st.image, così non sono ingrandibili. Le key dei crop nei
-       dettagli sono dinamiche (indice) => match parziale.
-       Stesso trattamento al logo della barra laterale (unica immagine lì dentro): è un
-       marchio, non un contenuto dell'archivio, quindi non deve essere ingrandibile. */
-    :is(.st-key-immagine_query, .st-key-volti_query, [class*="st-key-crop_volto"],
-        [data-testid="stSidebar"])
+       dettagli sono dinamiche (indice) => match parziale. */
+    :is(.st-key-immagine_query, .st-key-volti_query, [class*="st-key-crop_volto"])
     [data-testid="stElementToolbar"] {
         display: none !important;
     }
@@ -1054,9 +1054,31 @@ def mostra_paginatore_galleria(
 
 # (I filtri di ricerca sono stati spostati nella pagina "Ricerca Avanzata".)
 
-# Pannello coda: si auto-aggiorna ogni secondo ed e' visibile da ogni pagina.
+def notifica(testo, icona="ℹ️"):
+    """Toast immediato + voce nella cronologia del pannello notifiche (sidebar).
+
+    Il toast sparisce dopo pochi secondi; la cronologia (in session_state, max 10
+    voci) resta consultabile. Il pannello è un fragment con run_every, quindi la
+    voce compare entro 1s a prescindere dal punto del run in cui viene registrata.
+    """
+    st.toast(testo, icon=icona)
+    st.session_state.setdefault("notifiche", []).insert(
+        0, {"testo": testo, "icona": icona, "ora": datetime.datetime.now().strftime("%H:%M")})
+    del st.session_state["notifiche"][10:]
+
+
+# Pannello notifiche: cronologia degli esiti + coda di elaborazione.
+# Si auto-aggiorna ogni secondo ed e' visibile da ogni pagina.
 @st.fragment(run_every=1.0)
-def pannello_coda():
+def pannello_notifiche():
+    notifiche = st.session_state.get("notifiche", [])
+    for voce in notifiche:
+        st.caption(f"{voce['ora']} · {voce['icona']} {voce['testo']}")
+    if notifiche:
+        if st.button("🗑️ Svuota notifiche", key="notifiche_svuota", width='stretch'):
+            st.session_state["notifiche"] = []
+            st.rerun(scope="fragment")
+
     stato = processor.stato_coda()
     if stato["rimanenti"] == 0 and not stato["in_corso"]:
         # Anche a coda vuota il pulsante di retry deve esserci: se TUTTI gli stadi
@@ -1067,6 +1089,8 @@ def pannello_coda():
             if st.button(f"🔁 Riprova falliti ({stato['falliti']})", key="coda_riprova_vuota", width='stretch'):
                 processor.riprova_falliti()
                 st.rerun(scope="fragment")
+        elif not notifiche:
+            st.caption("Nessuna notifica.")
         return
     riga = f"⚙️ **Coda elaborazione:** {stato['rimanenti']} file"
     if stato["in_corso"]:
@@ -1091,16 +1115,8 @@ def pannello_coda():
             st.rerun(scope="fragment")
 
 with st.sidebar:
-    pannello_coda()
-
-# Informazioni locali e pulizia memoria
-st.sidebar.markdown("### Configurazione Locale")
-st.sidebar.markdown("<div style='margin-top: 0.75rem;'></div>", unsafe_allow_html=True)
-st.sidebar.markdown(f"**Dispositivo:** `{gestore.dispositivo.upper()}`")
-
-if gestore.dispositivo == "cuda" and st.sidebar.button("Libera Memoria GPU", key="sb_clear_gpu"):
-    gestore.libera_memoria()
-    st.sidebar.success("Memoria liberata con successo!")
+    st.markdown("### 🔔 Notifiche")
+    pannello_notifiche()
 
 # --- NAVIGAZIONE SUPERIORE (NAVBAR) ---
 if "selezione_menu" not in st.session_state:
@@ -1120,15 +1136,15 @@ n_problemi = len(file_intrusi) + len(record_orfani)
 # del run in cui l'azione è avvenuta, e al run successivo il pannello può essere già chiuso.
 esito = st.session_state.pop("esito_integrita", None)
 if esito:
-    st.toast(esito["testo"], icon=esito["icona"])
+    notifica(esito["testo"], esito["icona"])
 esito_eliminazione = st.session_state.pop("esito_eliminazione", None)
 if esito_eliminazione:
     eliminati = esito_eliminazione["eliminati"]
     errori = esito_eliminazione["errori"]
     if eliminati:
-        st.toast(f"Eliminati {eliminati} elementi dall'archivio.", icon="✅")
+        notifica(f"Eliminati {eliminati} elementi dall'archivio.", "✅")
     if errori:
-        st.toast(f"Impossibile eliminare {errori} elementi.", icon="⚠️")
+        notifica(f"Impossibile eliminare {errori} elementi.", "⚠️")
 
 contenitore_navbar = st.container(key="navbar")
 with contenitore_navbar:
@@ -1486,7 +1502,7 @@ elif menu == "📤 Caricamento & Import":
         # del run in cui l'azione è avvenuta (stesso schema del controllo integrità).
         esito_caricamento = st.session_state.pop("esito_caricamento", None)
         if esito_caricamento:
-            st.toast(esito_caricamento["testo"], icon=esito_caricamento["icona"])
+            notifica(esito_caricamento["testo"], esito_caricamento["icona"])
 
         # Key dinamica (nonce): incrementandola dopo l'elaborazione, Streamlit crea un
         # uploader nuovo e vuoto, così i file inseriti scompaiono.
