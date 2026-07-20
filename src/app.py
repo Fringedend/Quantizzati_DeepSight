@@ -69,13 +69,39 @@ st.sidebar.markdown(
 )
 
 # Logo piccolo al centro dell'header. Non si usa st.logo perché è ancorato a sinistra
-# e migra nell'intestazione della sidebar quando questa è aperta: un'immagine fissa
-# (base64 inline, ~30 KB) resta centrata a prescindere. Lo stile (centratura, misura,
-# comparsa/scomparsa legata allo stato della sidebar) è nella classe CSS qui sotto.
+# e migra nell'intestazione della sidebar quando questa è aperta. E NON è un <img>
+# nell'albero degli elementi: a ogni rerun (ogni clic di navigazione) Streamlit
+# smonta/attenua gli elementi "stale" e un'immagine sovrapposta all'header
+# lampeggerebbe. Come pseudo-elemento dell'header (cornice fissa dell'app, mai
+# ri-renderizzata) il logo resta stabile per costruzione. Header 60px, logo 44px
+# => top 8px per il centro verticale. Con la sidebar APERTA il logo grande è già
+# visibile lì: questo scompare (body:has su aria-expanded) e ricompare con una
+# molla alla chiusura — stessa curva delle icone della navbar.
 with open(PERCORSO_LOGO, "rb") as _file_logo:
     _logo_b64 = base64.b64encode(_file_logo.read()).decode("ascii")
 st.markdown(
-    f"<img src='data:image/png;base64,{_logo_b64}' alt='DeepSight' class='logo-header-centrale'>",
+    f"""
+<style>
+header[data-testid="stHeader"]::after {{
+    content: "";
+    position: fixed;
+    top: 8px;
+    left: 50%;
+    width: 5rem;
+    height: 2.75rem;
+    background: url("data:image/png;base64,{_logo_b64}") center / contain no-repeat;
+    pointer-events: none;
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+    transition: opacity 0.25s ease,
+                transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}}
+body:has([data-testid="stSidebar"][aria-expanded="true"]) header[data-testid="stHeader"]::after {{
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px) scale(0.5);
+    transition: opacity 0.15s ease, transform 0.2s ease;
+}}
+</style>""",
     unsafe_allow_html=True,
 )
 
@@ -375,28 +401,6 @@ st.markdown("""
         display: none !important;
     }
 
-    /* Logo al centro dell'header (l'<img> base64 iniettata dopo il marchio sidebar).
-       Header alto 60px, logo 44px => top 8px per il centro verticale esatto.
-       Con la sidebar APERTA il logo grande è già visibile lì: questo scompare
-       (via body:has sullo stato aria-expanded) e ricompare con una molla quando
-       la sidebar si chiude — stessa curva delle icone della navbar. */
-    .logo-header-centrale {
-        position: fixed;
-        top: 8px;
-        left: 50%;
-        height: 2.75rem;
-        z-index: 999991;
-        pointer-events: none;
-        opacity: 1;
-        transform: translateX(-50%) translateY(0) scale(1);
-        transition: opacity 0.25s ease,
-                    transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-    }
-    body:has([data-testid="stSidebar"][aria-expanded="true"]) .logo-header-centrale {
-        opacity: 0;
-        transform: translateX(-50%) translateY(-10px) scale(0.5);
-        transition: opacity 0.15s ease, transform 0.2s ease;
-    }
     /* Sidebar a larghezza fissa: nasconde la maniglia di trascinamento sul bordo
        (selettore sullo stile inline: le classi emotion sono hash instabili).
        Il pulsante di collasso (stSidebarCollapseButton) resta funzionante. */
