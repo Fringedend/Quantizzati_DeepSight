@@ -1,4 +1,5 @@
 import streamlit as st
+import base64
 import io
 import os
 import sys
@@ -64,6 +65,19 @@ processor.avvia_lavoratore()
 st.sidebar.image(PERCORSO_LOGO, width='stretch')
 st.sidebar.markdown(
     "<h2 style='text-align:center; color:var(--accent-testo); margin-top:-6px;'>DeepSight</h2>",
+    unsafe_allow_html=True,
+)
+
+# Logo piccolo al centro dell'header, sempre visibile. Non si usa st.logo perché è
+# ancorato a sinistra e migra nell'intestazione della sidebar quando questa è aperta:
+# un'immagine fissa (base64 inline, ~30 KB) resta centrata a prescindere dallo stato
+# della sidebar. pointer-events:none la rende trasparente ai clic sull'header.
+with open(PERCORSO_LOGO, "rb") as _file_logo:
+    _logo_b64 = base64.b64encode(_file_logo.read()).decode("ascii")
+st.markdown(
+    f"<img src='data:image/png;base64,{_logo_b64}' alt='DeepSight' "
+    "style='position:fixed; top:0.4rem; left:50%; transform:translateX(-50%); "
+    "height:2.2rem; z-index:999991; pointer-events:none;'>",
     unsafe_allow_html=True,
 )
 
