@@ -56,13 +56,16 @@ if "geocodifica_fatta" not in st.session_state:
 # Avvia il lavoratore della coda: riprende da solo gli elementi pendenti nel DB.
 processor.avvia_lavoratore()
 
-# --- MARCHIO (in alto a sinistra) ---
-# st.logo posiziona il marchio nell'angolo alto-sinistra: in cima alla sidebar quando è
-# aperta, nell'header quando è collassata. Il tema chiaro/scuro si cambia con lo switch
-# NATIVO di Streamlit (icona ⋮ in alto a destra -> Settings -> Appearance). Per seguirlo
-# senza doverlo rilevare (st.context.theme è inaffidabile all'istante del cambio, issue
-# #11920), i colori del CSS sono NEUTRI/traslucidi: si adattano da soli a entrambi i temi.
-st.logo(PERCORSO_LOGO, size="large")
+# --- MARCHIO (in cima alla barra laterale) ---
+# Logo blu grande e ben visibile. Il tema chiaro/scuro si cambia con lo switch NATIVO
+# di Streamlit (icona ⋮ in alto a destra -> Settings -> Appearance). Per seguirlo senza
+# doverlo rilevare (st.context.theme è inaffidabile all'istante del cambio, issue #11920),
+# i colori del CSS sono NEUTRI/traslucidi: si adattano da soli sia al tema scuro sia al chiaro.
+st.sidebar.image(PERCORSO_LOGO, width='stretch')
+st.sidebar.markdown(
+    "<h2 style='text-align:center; color:var(--accent-testo); margin-top:-6px;'>DeepSight</h2>",
+    unsafe_allow_html=True,
+)
 
 # Stile CSS personalizzato per la UI. I colori sono NEUTRI (grigi traslucidi + accenti
 # del brand), così restano leggibili su qualunque tema di Streamlit senza doverlo rilevare.
@@ -342,11 +345,16 @@ st.markdown("""
         background: var(--superficie);
         border-right: 1px solid var(--bordo);
     }
-    /* Logo (st.logo) più grande del tetto nativo di 32px. Streamlit lo rende con
-       data-testid stHeaderLogo (sidebar chiusa) o stSidebarLogo (sidebar aperta). */
-    img[data-testid="stHeaderLogo"],
-    img[data-testid="stSidebarLogo"] {
-        height: 2.75rem;
+    /* Pulsante che riapre la sidebar (a sidebar collassata): la freccia » diventa
+       una campanella, coerente col ruolo di pannello notifiche. Il glifo Material
+       viene nascosto e sostituito da un ::before sul pulsante. */
+    [data-testid="stExpandSidebarButton"] span {
+        display: none;
+    }
+    [data-testid="stExpandSidebarButton"]::before {
+        content: "🔔";
+        font-size: 1.25rem;
+        line-height: 1;
     }
     /* Sidebar a larghezza fissa: nasconde la maniglia di trascinamento sul bordo
        (selettore sullo stile inline: le classi emotion sono hash instabili).
@@ -533,8 +541,11 @@ st.markdown("""
     /* Le immagini caricate per una ricerca (immagine di query, ritagli dei volti) sono
        immagini di lavoro, non elementi d'archivio: si toglie il pulsante fullscreen che
        Streamlit sovrappone a ogni st.image, così non sono ingrandibili. Le key dei crop nei
-       dettagli sono dinamiche (indice) => match parziale. */
-    :is(.st-key-immagine_query, .st-key-volti_query, [class*="st-key-crop_volto"])
+       dettagli sono dinamiche (indice) => match parziale.
+       Stesso trattamento al logo della barra laterale (unica immagine lì dentro): è un
+       marchio, non un contenuto dell'archivio, quindi non deve essere ingrandibile. */
+    :is(.st-key-immagine_query, .st-key-volti_query, [class*="st-key-crop_volto"],
+        [data-testid="stSidebar"])
     [data-testid="stElementToolbar"] {
         display: none !important;
     }
