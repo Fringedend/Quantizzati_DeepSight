@@ -1097,8 +1097,6 @@ with st.sidebar:
 st.sidebar.markdown("### Configurazione Locale")
 st.sidebar.markdown("<div style='margin-top: 0.75rem;'></div>", unsafe_allow_html=True)
 st.sidebar.markdown(f"**Dispositivo:** `{gestore.dispositivo.upper()}`")
-st.sidebar.markdown(f"**Intervallo Frame:** `{config.INTERVALLO_FRAME_VIDEO} sec`")
-st.sidebar.markdown(f"**Soglia Volti:** `{config.SOGLIA_SIMILARITA_VOLTI}`")
 
 if gestore.dispositivo == "cuda" and st.sidebar.button("Libera Memoria GPU", key="sb_clear_gpu"):
     gestore.libera_memoria()
