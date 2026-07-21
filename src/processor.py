@@ -243,8 +243,8 @@ CATEGORIE = [
     "cibo", "bevanda", "frutta", "interno", "cucina", "ristorante",
     "documento", "testo", "libro", "computer", "telefono", "sport", "arte", "videogioco", "musica", "strumento musicale",
     "matrimonio", "compleanno", "festa", "concerto", "selfie", "screenshot",
-    "neonato", "chiesa", "museo", "castello", "treno", "aeroporto", "piscina",
-    "fuochi d'artificio", "disegno", "pittura", "scultura", "moda", "viaggio", "vacanza", "sport invernali",
+    "neonato", "chiesa", "museo", "castello", "treno", "piscina",
+    "fuochi d'artificio", "disegno", "pittura", "scultura", "sport invernali",
 ]
 
 _embedding_categorie_precomputati = None
