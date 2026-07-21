@@ -239,10 +239,9 @@ CATEGORIE = [
     "edificio", "casa", "ufficio", "strada", "città",
     "natura", "albero", "foresta", "fiore", "giardino", "prato",
     "montagna", "collina", "spiaggia", "mare", "fiume", "lago", "acqua",
-    "tramonto", "alba", "cielo", "nuvola", "neve", "ghiaccio", "pioggia", "temporale", "arcobaleno",
+    "tramonto", "alba", "cielo", "nuvola", "neve", "ghiaccio", "pioggia", "temporale", "arcobaleno", "notte",
     "cibo", "bevanda", "frutta", "interno", "cucina", "ristorante",
     "documento", "testo", "libro", "computer", "telefono", "sport", "arte", "videogioco", "musica", "strumento musicale",
-    # Aggiunte rispetto alla lista originale dell'era CLIP
     "matrimonio", "compleanno", "festa", "concerto", "selfie", "screenshot",
     "neonato", "chiesa", "museo", "castello", "treno", "aeroporto", "piscina",
     "fuochi d'artificio", "disegno", "pittura", "scultura", "moda", "viaggio", "vacanza", "sport invernali",
