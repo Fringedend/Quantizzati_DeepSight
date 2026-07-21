@@ -389,10 +389,35 @@ st.markdown("""
     [data-testid="stExpandSidebarButton"] span {
         display: none;
     }
+    [data-testid="stExpandSidebarButton"] {
+        position: relative;
+    }
     [data-testid="stExpandSidebarButton"]::before {
         content: "🔔";
         font-size: 1.25rem;
         line-height: 1;
+    }
+    /* Pallino rosso di "notifiche non lette": compare sulla campanella solo quando
+       il body ha la classe deepsight-non-lette (impostata via JS in base al conteggio
+       notifiche vs. l'ultima apertura della sidebar). Nascosto di default. */
+    [data-testid="stExpandSidebarButton"]::after {
+        content: "";
+        position: absolute;
+        top: 0.3rem;
+        right: 0.3rem;
+        width: 9px;
+        height: 9px;
+        background: #e5484d;
+        border: 1.5px solid var(--superficie, #fff);
+        border-radius: 50%;
+        opacity: 0;
+        transform: scale(0);
+        transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+        pointer-events: none;
+    }
+    body.deepsight-non-lette [data-testid="stExpandSidebarButton"]::after {
+        opacity: 1;
+        transform: scale(1);
     }
 
     /* Pulsante "Deploy" di Streamlit Cloud: irrilevante per un'app locale.
@@ -1121,6 +1146,10 @@ def notifica(testo, icona="ℹ️"):
     st.session_state.setdefault("notifiche", []).insert(
         0, {"testo": testo, "icona": icona, "ora": datetime.datetime.now().strftime("%H:%M")})
     del st.session_state["notifiche"][10:]
+    # Contatore monotòno: usato dal pallino "non lette" sulla campanella. La lista è
+    # tosata a 10 voci, quindi len() non basterebbe a rilevare una nuova notifica quando
+    # se ne perdono di vecchie; questo invece cresce sempre.
+    st.session_state["notifiche_totali"] = st.session_state.get("notifiche_totali", 0) + 1
 
 
 # Pannello notifiche: cronologia degli esiti + coda di elaborazione.
@@ -1173,6 +1202,43 @@ def pannello_notifiche():
 with st.sidebar:
     st.markdown("### 🔔 Notifiche")
     pannello_notifiche()
+
+# Ponte JS per il pallino "notifiche non lette" sulla campanella. Streamlit non
+# comunica al backend l'apertura/chiusura della sidebar, quindi il "letto" si rileva
+# lato client: si osserva aria-expanded della sidebar e si confronta il conteggio
+# notifiche col valore all'ultima apertura (memorizzato in window.parent, vive quanto
+# la sessione). Girando in un iframe srcdoc same-origin, può manipolare document del
+# genitore. height=0: nessun ingombro visivo.
+st.components.v1.html(
+    f"""
+    <script>
+    const doc = window.parent.document;
+    const totali = {int(st.session_state.get("notifiche_totali", 0))};
+    const P = window.parent;
+    if (P.__bell === undefined) P.__bell = {{letto: totali}};
+
+    function aggiornaPallino() {{
+        const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+        const aperta = sidebar && sidebar.getAttribute('aria-expanded') === 'true';
+        if (aperta) P.__bell.letto = totali;            // sidebar aperta = notifiche lette
+        doc.body.classList.toggle('deepsight-non-lette', totali > P.__bell.letto);
+    }}
+
+    // Osserva l'apertura/chiusura della sidebar (una sola volta per sessione), così il
+    // pallino sparisce appena si apre la campanella, senza attendere un rerun.
+    if (!P.__bellObs) {{
+        const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+        if (sidebar) {{
+            const obs = new MutationObserver(aggiornaPallino);
+            obs.observe(sidebar, {{attributes: true, attributeFilter: ['aria-expanded']}});
+            P.__bellObs = obs;
+        }}
+    }}
+    aggiornaPallino();
+    </script>
+    """,
+    height=0,
+)
 
 # --- NAVIGAZIONE SUPERIORE (NAVBAR) ---
 if "selezione_menu" not in st.session_state:
