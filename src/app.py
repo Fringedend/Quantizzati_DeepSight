@@ -1199,6 +1199,25 @@ def pannello_notifiche():
             processor.riprova_falliti()
             st.rerun(scope="fragment")
 
+# Notifiche degli esiti delle azioni (integrità, eliminazione, caricamento): emesse QUI,
+# prima del pannello e del ponte JS della campanella, così "notifiche_totali" è già
+# aggiornato quando il ponte calcola il pallino (altrimenti, emesse più in basso nello
+# script, il pallino comparirebbe solo al rerun successivo). Ogni esito è impostato in
+# session_state dall'azione del run precedente, che poi fa st.rerun() scartando i propri
+# messaggi (per questo non vengono emesse dove l'azione avviene).
+_esito_integrita = st.session_state.pop("esito_integrita", None)
+if _esito_integrita:
+    notifica(_esito_integrita["testo"], _esito_integrita["icona"])
+_esito_eliminazione = st.session_state.pop("esito_eliminazione", None)
+if _esito_eliminazione:
+    if _esito_eliminazione["eliminati"]:
+        notifica(f"Eliminati {_esito_eliminazione['eliminati']} elementi dall'archivio.", "✅")
+    if _esito_eliminazione["errori"]:
+        notifica(f"Impossibile eliminare {_esito_eliminazione['errori']} elementi.", "⚠️")
+_esito_caricamento = st.session_state.pop("esito_caricamento", None)
+if _esito_caricamento:
+    notifica(_esito_caricamento["testo"], _esito_caricamento["icona"])
+
 with st.sidebar:
     st.markdown("### 🔔 Notifiche")
     pannello_notifiche()
@@ -1206,35 +1225,45 @@ with st.sidebar:
 # Ponte JS per il pallino "notifiche non lette" sulla campanella. Streamlit non
 # comunica al backend l'apertura/chiusura della sidebar, quindi il "letto" si rileva
 # lato client: si osserva aria-expanded della sidebar e si confronta il conteggio
-# notifiche col valore all'ultima apertura (memorizzato in window.parent, vive quanto
-# la sessione). Girando in un iframe srcdoc same-origin, può manipolare document del
-# genitore. height=0: nessun ingombro visivo.
+# notifiche col valore all'ultima apertura.
+#
+# IMPORTANTE: observer e callback devono vivere nel realm della PAGINA GENITORE, non
+# in questo iframe. A ogni nuova notifica Streamlit ri-renderizza il componente e
+# DISTRUGGE l'iframe precedente: un MutationObserver la cui callback stesse qui
+# resterebbe registrato ma con la funzione in un contesto morto, e non scatterebbe
+# piu' (l'apertura della sidebar non cancellerebbe il pallino). Percio' l'iframe si
+# limita a iniettare uno <script> nel document del genitore, che ridefinisce funzione
+# e observer a ogni render col conteggio aggiornato. Lo stato "letto" (__bell) invece
+# persiste tra i render, cosi' una notifica gia' vista non riaccende il pallino.
+_totale_notifiche = int(st.session_state.get("notifiche_totali", 0))
 st.components.v1.html(
     f"""
     <script>
-    const doc = window.parent.document;
-    const totali = {int(st.session_state.get("notifiche_totali", 0))};
-    const P = window.parent;
-    if (P.__bell === undefined) P.__bell = {{letto: totali}};
-
-    function aggiornaPallino() {{
-        const sidebar = doc.querySelector('[data-testid="stSidebar"]');
-        const aperta = sidebar && sidebar.getAttribute('aria-expanded') === 'true';
-        if (aperta) P.__bell.letto = totali;            // sidebar aperta = notifiche lette
-        doc.body.classList.toggle('deepsight-non-lette', totali > P.__bell.letto);
-    }}
-
-    // Osserva l'apertura/chiusura della sidebar (una sola volta per sessione), così il
-    // pallino sparisce appena si apre la campanella, senza attendere un rerun.
-    if (!P.__bellObs) {{
-        const sidebar = doc.querySelector('[data-testid="stSidebar"]');
-        if (sidebar) {{
-            const obs = new MutationObserver(aggiornaPallino);
-            obs.observe(sidebar, {{attributes: true, attributeFilter: ['aria-expanded']}});
-            P.__bellObs = obs;
-        }}
-    }}
-    aggiornaPallino();
+    (function() {{
+        const P = window.parent;
+        const codice = `
+            if (window.__bell === undefined) window.__bell = {{letto: {_totale_notifiche}}};
+            window.__bellTotali = {_totale_notifiche};
+            window.__aggiornaBell = function() {{
+                var sb = document.querySelector('[data-testid="stSidebar"]');
+                var aperta = sb && sb.getAttribute('aria-expanded') === 'true';
+                if (aperta) window.__bell.letto = window.__bellTotali;  // aperta = letta
+                document.body.classList.toggle(
+                    'deepsight-non-lette', window.__bellTotali > window.__bell.letto);
+            }};
+            if (window.__bellObs) window.__bellObs.disconnect();
+            var sb = document.querySelector('[data-testid="stSidebar"]');
+            if (sb) {{
+                window.__bellObs = new MutationObserver(window.__aggiornaBell);
+                window.__bellObs.observe(sb, {{attributes: true, attributeFilter: ['aria-expanded']}});
+            }}
+            window.__aggiornaBell();
+        `;
+        const s = P.document.createElement('script');
+        s.textContent = codice;
+        P.document.body.appendChild(s);
+        s.remove();  // il codice ha gia' girato: funzione e observer restano nel genitore
+    }})();
     </script>
     """,
     height=0,
@@ -1253,20 +1282,7 @@ def _scansione_integrita():
 
 file_intrusi, record_orfani = _scansione_integrita()
 n_problemi = len(file_intrusi) + len(record_orfani)
-
-# Esito dell'ultima azione, emesso qui e non dentro il popover: st.rerun() scarta i messaggi
-# del run in cui l'azione è avvenuta, e al run successivo il pannello può essere già chiuso.
-esito = st.session_state.pop("esito_integrita", None)
-if esito:
-    notifica(esito["testo"], esito["icona"])
-esito_eliminazione = st.session_state.pop("esito_eliminazione", None)
-if esito_eliminazione:
-    eliminati = esito_eliminazione["eliminati"]
-    errori = esito_eliminazione["errori"]
-    if eliminati:
-        notifica(f"Eliminati {eliminati} elementi dall'archivio.", "✅")
-    if errori:
-        notifica(f"Impossibile eliminare {errori} elementi.", "⚠️")
+# (Le notifiche degli esiti sono emesse più in alto, prima del pannello notifiche.)
 
 contenitore_navbar = st.container(key="navbar")
 with contenitore_navbar:
@@ -1619,12 +1635,9 @@ elif menu == "📤 Caricamento & Import":
     modalita_caricamento = st.session_state.get("modalita_caricamento", "file")
 
     if modalita_caricamento == "file":
-        # Esito dell'ultimo caricamento: emesso qui perché, per svuotare l'uploader, dopo
-        # l'elaborazione si cambia la sua key e si fa st.rerun(), che però scarta i messaggi
-        # del run in cui l'azione è avvenuta (stesso schema del controllo integrità).
-        esito_caricamento = st.session_state.pop("esito_caricamento", None)
-        if esito_caricamento:
-            notifica(esito_caricamento["testo"], esito_caricamento["icona"])
+        # (L'esito del caricamento — impostato in fondo, dopo l'elaborazione, prima dello
+        # st.rerun() che svuota l'uploader — è emesso come notifica più in alto nello script,
+        # insieme agli altri esiti, così il pallino della campanella si aggiorna nello stesso run.)
 
         # Key dinamica (nonce): incrementandola dopo l'elaborazione, Streamlit crea un
         # uploader nuovo e vuoto, così i file inseriti scompaiono.
